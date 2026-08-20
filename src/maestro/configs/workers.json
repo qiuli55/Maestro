@@ -1,0 +1,13 @@
+{
+  "workers": {
+    "opencode": {
+      "bin": "E:/tools/opencode/opencode.exe"
+    },
+    "octo": {
+      "bin": "E:/tools/octo/octo.exe"
+    },
+    "minimax": {
+      "bin": "F:/npm_global/bin/mmx"
+    }
+  }
+}

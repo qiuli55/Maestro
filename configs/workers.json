@@ -1,0 +1,8 @@
+{
+  "workers": {
+    "opencode": { "bin": "E:\\tools\\opencode\\node_modules\\opencode-ai\\bin\\opencode.exe" },
+    "octo": { "bin": "E:\\tools\\octo\\octo.exe" },
+    "codebuddy": { "bin": "E:\\tools\\codebuddy\\codebuddy.cmd" },
+    "workbuddy": { "bin": "workbuddy-cli" }
+  }
+}

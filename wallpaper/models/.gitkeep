@@ -1,0 +1,10 @@
+# 把用 Live2D Cubism 导出的数字人模型目录放在这里：
+#   wallpaper/models/live2d/avatar/
+#   其中需包含 model3.json + 贴图 + motions/ + expressions/（Cubism 4 导出结构）
+# Maestro 壁纸(../index.html)会自动加载 model3.json 并显示（用 Cubism Web SDK）。
+# 未放置时壁纸显示会呼吸/眨眼的二次元占位形象。
+#
+# 自己定制流程（全免费）：
+#   1) 准备分层立绘（PSD/PNG，建议 2000px 以上，分图层：脸/眼/嘴/头发前后/身体）
+#   2) Live2D Cubism 免费版绑定参数（眨眼/呼吸/身体摆动/口型/表情），导出 model3.json
+#   3) 丢进 live2d/avatar/ 即可在壁纸看到会动的二次元角色

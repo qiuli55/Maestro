@@ -1,0 +1,56 @@
+{
+	"Version": 3,
+	"Meta": {
+		"Duration": 4,
+		"Fps": 24,
+		"Loop": true,
+		"AreBeziersRestricted": false,
+		"CurveCount": 2,
+		"TotalSegmentCount": 8,
+		"TotalPointCount": 10,
+		"UserDataCount": 0,
+		"TotalUserDataSize": 0
+	},
+	"Curves": [
+		{
+			"Target": "PartOpacity",
+			"Id": "v3qfm5m",
+			"Segments": [
+				0,
+				1,
+				0,
+				3.4,
+				1,
+				0,
+				3.55,
+				0,
+				0,
+				3.7,
+				1,
+				0,
+				4,
+				1
+			]
+		},
+		{
+			"Target": "PartOpacity",
+			"Id": "ezq66gn",
+			"Segments": [
+				0,
+				1,
+				0,
+				3.4,
+				1,
+				0,
+				3.55,
+				0,
+				0,
+				3.7,
+				1,
+				0,
+				4,
+				1
+			]
+		}
+	]
+}

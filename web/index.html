@@ -1,0 +1,1834 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>Maestro × 芙莉莲 · 1:1 复刻（按 scene.json）</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  @font-face{font-family:"8bit";src:url("/wallpaper/models/frieren/fonts/8bitOperatorPlus8-Regular.ttf") format("truetype")}
+  html,body{width:100%;height:100%;overflow:hidden;background:#bebdd7;font-family:"Segoe UI","PingFang SC",sans-serif}
+  #stage{position:fixed;left:50%;top:50%;width:2560px;height:1440px;transform:translate(-50%,-50%) scale(var(--s,1));transform-origin:center}
+  #bgcolor{position:absolute;left:0;top:0;width:2560px;height:1440px;background:#bebdd7}
+  .p,.anchor{position:absolute;pointer-events:auto;will-change:transform;transform-origin:center;user-select:none}
+  .anchor{pointer-events:none}  /* 锚点本身不接收事件，但保留尺寸 */
+  img.p{display:block;object-fit:fill}
+  .txt{position:absolute;white-space:nowrap;font-family:"8bit",ui-monospace,monospace;letter-spacing:1px;pointer-events:none;font-weight:400}
+  #fx-bars{position:absolute;left:0;top:0;width:2560px;height:1440px;pointer-events:none;z-index:10}
+  #fx{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:30}
+  #hitface{position:absolute;cursor:pointer;z-index:50;pointer-events:auto}
+  #maestro{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:60;font-family:"Segoe UI","PingFang SC",system-ui,sans-serif;color:#3a3a55;cursor:pointer;user-select:none}
+  .m-card{background:rgba(245,247,255,.82);border:1px solid rgba(80,90,140,.3);border-radius:12px;padding:9px 14px;min-width:240px;box-shadow:0 4px 18px rgba(40,50,100,.25);backdrop-filter:blur(5px)}
+  .m-head{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:#33334f}
+  .m-dot{width:8px;height:8px;border-radius:50%;background:#8a94ad;flex:none}
+  .m-dot.running{background:#4da3ff;box-shadow:0 0 10px #4da3ff;animation:pulse 1.4s ease-in-out infinite}
+  .m-dot.done{background:#34c96b;box-shadow:0 0 10px #34c96b}
+  .m-dot.failed{background:#ef6a6a;box-shadow:0 0 10px #ef6a6a}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .m-sub{margin-top:5px;font-size:11.5px;color:#55557a;line-height:1.5}
+  .m-sub b{color:#33335f;font-weight:600}
+  .m-offline{font-size:10.5px;color:#8888a8;margin-top:4px}
+  .m-list{display:none;margin-top:6px;border-top:1px solid rgba(80,90,140,.2);padding-top:4px;max-height:200px;overflow-y:auto;font-size:11px;color:#55557a}
+  .m-list.show{display:block}
+  .m-item{padding:4px 2px;border-bottom:1px solid rgba(80,90,140,.08)}
+  .m-item .st{display:inline-block;width:44px;font-weight:600}
+  .m-item .st.ok{color:#1fa855}.m-item .st.fail{color:#d64545}.m-item .st.run{color:#2f7fd6}
+  #bubble{position:fixed;left:50%;bottom:38%;z-index:55;display:none;font-family:"Segoe UI","PingFang SC",sans-serif;font-size:15px;color:#1b2237;background:#f5f7ff;padding:10px 16px;border-radius:14px;box-shadow:0 4px 20px rgba(0,0,0,.35);max-width:340px;transform:translateX(-50%)}
+  #bubble::after{content:"";position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);border-left:8px solid transparent;border-right:8px solid transparent;border-top:8px solid #f5f7ff}
+  /* 底部输入框（聊天 / 派任务 双模式） */
+  #reply{position:fixed;left:50%;bottom:150px;transform:translateX(-50%);z-index:56;display:none;font-family:"Segoe UI","PingFang SC",sans-serif;font-size:14px;color:#1b2237;background:#f5f7ff;padding:12px 16px;border-radius:14px;box-shadow:0 4px 20px rgba(0,0,0,.35);max-width:520px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+  #reply::after{content:"";position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);border-left:8px solid transparent;border-right:8px solid transparent;border-top:8px solid #f5f7ff}
+  #dock{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:56;display:flex;flex-direction:column;gap:7px;align-items:center;font-family:"Segoe UI","PingFang SC",sans-serif}
+  .dock-tabs{display:flex;gap:3px;background:rgba(245,247,255,.82);border:1px solid rgba(80,90,140,.3);border-radius:10px;padding:3px}
+  .dock-tab{font-size:12px;color:#55557a;padding:4px 15px;border-radius:7px;cursor:pointer;user-select:none;transition:all .15s}
+  .dock-tab.active{background:#5b6bb5;color:#fff}
+  .dock-row{display:flex;gap:8px;align-items:center;background:rgba(245,247,255,.9);border:1px solid rgba(80,90,140,.3);border-radius:12px;padding:8px 11px;box-shadow:0 4px 18px rgba(40,50,100,.25);backdrop-filter:blur(5px);flex-wrap:wrap}
+  /* ===== 多 agent 选择器 ===== */
+  .agent-selector{
+    display:none;flex-direction:column;gap:5px;
+    width:100%;padding:8px 0 0;
+  }
+  .agent-selector.visible{display:flex}
+  .agent-label{font-size:11px;color:#7a7aa8;font-weight:600;letter-spacing:.05em;text-transform:uppercase}
+  .agent-chips{display:flex;flex-wrap:wrap;gap:5px}
+  .agent-chip{
+    display:flex;align-items:center;gap:4px;
+    padding:3px 8px 3px 5px;border-radius:20px;cursor:pointer;
+    border:1.5px solid rgba(91,107,181,.3);background:rgba(245,247,255,.7);
+    font-size:11px;color:#55557a;transition:all .15s;user-select:none
+  }
+  .agent-chip input[type=checkbox]{display:none}
+  .agent-chip .chip-check{
+    width:13px;height:13px;border-radius:3px;border:1.5px solid rgba(91,107,181,.4);
+    display:flex;align-items:center;justify-content:center;flex:none;transition:all .12s;
+    background:#fff
+  }
+  .agent-chip .chip-check::after{content:'✓';font-size:8px;color:#fff;opacity:0;transition:opacity .1s}
+  .agent-chip.selected{border-color:#5b6bb5;background:rgba(91,107,181,.12);color:#33334f}
+  .agent-chip.selected .chip-check{background:#5b6bb5;border-color:#5b6bb5}
+  .agent-chip.selected .chip-check::after{opacity:1}
+  .agent-chip.disabled{opacity:.45;cursor:not-allowed}
+  .agent-chip:hover:not(.disabled){border-color:#5b6bb5}
+  .agent-chip .chip-dot{
+    width:5px;height:5px;border-radius:50%;background:#4caf50;flex:none;margin-left:2px
+  }
+  .agent-chip.disabled .chip-dot{background:#ccc}
+  /* ===== 模型选择器 ===== */
+  .model-row{display:flex;align-items:center;gap:6px}
+  .model-label{font-size:11px;color:#7a7aa8;white-space:nowrap}
+  #model-select{
+    flex:1;min-width:0;padding:4px 8px;border-radius:7px;
+    border:1.5px solid rgba(91,107,181,.3);background:rgba(245,247,255,.8);
+    font-size:12px;color:#33334f;cursor:pointer;outline:none;
+    transition:border-color .15s
+  }
+  #model-select:focus{border-color:#5b6bb5}
+  #model-select option{padding:2px}
+  #dock-input{width:340px;border:none;outline:none;background:transparent;font-size:14px;color:#1b2237;font-family:inherit}
+  #dock-input::placeholder{color:#9a9ab8}
+  #dock-send{border:none;background:#5b6bb5;color:#fff;font-size:13px;padding:7px 16px;border-radius:8px;cursor:pointer;font-family:inherit}
+  #dock-send:hover{background:#4d5ca5}
+  #history-btn{border:none;background:rgba(90,105,175,.15);color:#4d5ca5;font-size:13px;padding:7px 12px;border-radius:8px;cursor:pointer;font-family:inherit}
+  #history-btn:hover{background:rgba(90,105,175,.25)}
+  /* 会话列表（hover 历史按钮弹出） */
+  .conv-wrap{position:relative}
+  /* 透明桥：覆盖按钮与浮层之间的 8px 间隙，鼠标上滑时 hover 不断 */
+  .conv-wrap::after{content:"";position:absolute;left:0;right:0;bottom:100%;height:8px}
+  .conv-list{position:absolute;bottom:calc(100% + 8px);right:0;width:290px;max-height:300px;overflow-y:auto;background:rgba(250,251,255,.97);border:1px solid rgba(80,90,140,.3);border-radius:12px;box-shadow:0 6px 30px rgba(40,50,100,.3);display:none;z-index:75;padding:6px;backdrop-filter:blur(8px)}
+  .conv-wrap:hover .conv-list{display:block}
+  .cv-item{padding:8px 10px;border-radius:8px;cursor:pointer}
+  .cv-item:hover{background:rgba(90,105,175,.1)}
+  .cv-item.active{background:rgba(91,107,181,.18)}
+  .cv-ops{display:none;gap:3px;flex:none}
+  .cv-item:hover .cv-ops{display:flex}
+  .cv-op{border:none;background:rgba(90,105,175,.14);color:#4d5ca5;font-size:11px;padding:2px 7px;border-radius:5px;cursor:pointer;line-height:1.5;font-family:inherit}
+  .cv-op:hover{background:rgba(90,105,175,.3)}
+  .cv-op.del{color:#d64545;background:rgba(214,69,69,.1)}
+  .cv-op.del:hover{background:rgba(214,69,69,.22)}
+  .cv-title{font-size:13px;color:#33334f;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:6px}
+  .cv-title .cv-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cv-time{font-size:10px;color:#a8a8c5;font-weight:400;flex:none}
+  .cv-prev{font-size:11px;color:#9a9ab8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cv-empty{text-align:center;color:#9a9ab8;padding:16px;font-size:12px}
+  .cv-new{padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px;color:#4d5ca5;font-weight:600;border-bottom:1px solid rgba(80,90,140,.1);margin-bottom:4px;user-select:none}
+  .cv-new:hover{background:rgba(90,105,175,.12)}
+  /* 历史对话面板 */
+  #history-panel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:560px;max-width:92vw;max-height:70vh;background:rgba(250,251,255,.96);border:1px solid rgba(80,90,140,.3);border-radius:16px;box-shadow:0 8px 40px rgba(40,50,100,.3);z-index:70;display:none;flex-direction:column;font-family:"Segoe UI","PingFang SC",sans-serif;backdrop-filter:blur(8px)}
+  #history-panel.show{display:flex}
+  .hp-head{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(80,90,140,.15);font-size:14px;font-weight:600;color:#33334f;cursor:grab;user-select:none}
+  .hp-head:active{cursor:grabbing}
+  .hp-close{border:none;background:transparent;font-size:20px;color:#8888a8;cursor:pointer;line-height:1;padding:0 4px}
+  .hp-close:hover{color:#4d5ca5}
+  .hp-list{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+  .hp-msg{max-width:78%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+  .hp-msg.user{align-self:flex-end;background:#5b6bb5;color:#fff;border-bottom-right-radius:4px}
+  .hp-msg.assistant{align-self:flex-start;background:#eceefc;color:#1b2237;border-bottom-left-radius:4px}
+  .hp-time{font-size:10px;color:rgba(155,155,185,.9);margin-top:3px;text-align:right}
+  .hp-msg.assistant .hp-time{text-align:left;color:#9a9ab8}
+  .hp-empty{text-align:center;color:#9a9ab8;padding:30px 0;font-size:13px}
+  /* 流式打字机光标 */
+  #reply .caret{display:inline-block;animation:caretblink .8s step-end infinite;color:#5b6bb5;font-weight:700}
+  @keyframes caretblink{50%{opacity:0}}
+  @keyframes ringspin{from{transform:translate(-50%,-50%) rotate(0deg)}to{transform:translate(-50%,-50%) rotate(360deg)}}
+  .ring{animation:ringspin 6s linear infinite}
+  /* 眨眼：用 WE 关键帧 origin 位移（edcv/rfvb：眼闭合时眼睑下移覆盖），0-92% 睁开 92-96% 闭合 96-100% 睁开 */
+  @keyframes blink{0%,88%,100%{transform:translate(-50%,-50%) translateY(0) scaleY(1)}92%,96%{transform:translate(-50%,-50%) translateY(1.2px) scaleY(0.12)}}
+  .eye{animation:blink 4.2s ease-in-out infinite}
+  /* idle 呼吸：身体/头轻微浮动（原版 Live2D 物理近似），非等比缩放更像真实呼吸 */
+  @keyframes breathe{0%,100%{transform:translate(-50%,-50%) translateY(0) scale(1,1)}50%{transform:translate(-50%,-50%) translateY(-2.5px) scale(1.006,1.012)}}
+  .breathe{animation:breathe 3.6s ease-in-out infinite}
+  /* 嘟嘴/皱眉/嘴（表情切换用，默认隐藏） */
+  .expr{display:none}
+
+  /* ===== 多窗口系统 ===== */
+  .win{
+    position:fixed;z-index:500;background:rgba(250,251,255,.96);border:1px solid rgba(80,90,140,.35);
+    border-radius:14px;box-shadow:0 8px 40px rgba(40,50,100,.35);backdrop-filter:blur(12px);
+    display:flex;flex-direction:column;font-family:"Segoe UI","PingFang SC",sans-serif;
+    width:420px;height:380px;pointer-events:auto;transition:border-color .15s,box-shadow .15s
+  }
+  .win.minimized{transform:scale(0);opacity:0;pointer-events:none}
+  .win.focused{border-color:rgba(91,107,181,.8)!important;box-shadow:0 8px 40px rgba(40,50,100,.35),0 0 0 3px rgba(91,107,181,.22)}
+  .win:not(.focused){border-color:rgba(80,90,140,.15);box-shadow:0 4px 20px rgba(40,50,100,.15)}
+  .win-head{
+    display:flex;align-items:center;justify-content:space-between;padding:8px 12px;
+    background:rgba(91,107,181,.12);border-bottom:1px solid rgba(80,90,140,.15);
+    border-radius:13px 13px 0 0;cursor:grab;user-select:none;transition:background .15s
+  }
+  .win.focused .win-head{background:rgba(91,107,181,.22)}
+  .win-head:active{cursor:grabbing}
+  .win-title{font-size:13px;font-weight:600;color:#33334f;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .win-kind{font-size:10px;color:#7a7aa8;margin-left:8px;flex:none}
+  .win-btns{display:flex;gap:6px;margin-left:10px}
+  .win-btn{
+    width:22px;height:22px;border:none;border-radius:5px;cursor:pointer;font-size:14px;line-height:1;
+    display:flex;align-items:center;justify-content:center;transition:all .12s
+  }
+  .win-btn.min{background:rgba(90,105,175,.15);color:#5a6a95}
+  .win-btn.min:hover{background:rgba(90,105,175,.3)}
+  .win-btn.max{background:rgba(90,105,175,.15);color:#5a6a95}
+  .win-btn.max:hover{background:rgba(90,105,175,.3)}
+  .win-btn.close{background:rgba(214,69,69,.12);color:#c64545}
+  .win-btn.close:hover{background:rgba(214,69,69,.25);color:#fff}
+  .win-body{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px}
+  .win-foot{
+    display:flex;gap:8px;padding:10px 12px;border-top:1px solid rgba(80,90,140,.12);
+    background:rgba(245,247,255,.5);border-radius:0 0 13px 13px
+  }
+  .win-input{flex:1;border:none;outline:none;background:rgba(255,255,255,.7);font-size:14px;
+    color:#1b2237;padding:8px 12px;border-radius:8px;font-family:inherit}
+  .win-input::placeholder{color:#9a9ab8}
+  .win-send{
+    border:none;background:#5b6bb5;color:#fff;font-size:13px;padding:8px 16px;border-radius:8px;
+    cursor:pointer;font-family:inherit
+  }
+  .win-send:hover{background:#4d5ca5}
+  /* 窗口内的消息 */
+  .win-msg{max-width:82%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.5;
+    white-space:pre-wrap;word-break:break-word}
+  .win-msg.user{align-self:flex-end;background:#5b6bb5;color:#fff;border-bottom-right-radius:4px}
+  .win-msg.assistant{align-self:flex-start;background:#eceefc;color:#1b2237;border-bottom-left-radius:4px}
+  .win-msg .caret{display:inline-block;animation:caretblink .8s step-end infinite;color:#5b6bb5;font-weight:700}
+  .win-time{font-size:10px;color:#a8a8c5;margin-top:3px;text-align:right}
+  .win-msg.user .win-time{text-align:right;color:rgba(255,255,255,.7)}
+  .win-msg.assistant .win-time{text-align:left;color:#9a9ab8}
+
+  /* ===== 精细桌宠（趴在最新气泡上，walk/run/jump/lift/sit/climb/lie 7 姿态） ===== */
+  .win-msg.assistant{position:relative}
+  .win-pet{
+    position:absolute;top:-52px;left:6px;
+    width:64px;height:80px;pointer-events:auto;
+    z-index:10;opacity:0;
+    transition:opacity .3s ease;
+    filter:drop-shadow(0 3px 8px rgba(91,70,120,.4));
+  }
+  .win-msg.assistant.has-pet .win-pet{opacity:1}
+  /* 桌宠容器 */
+  .win-pet-body{
+    position:relative;width:100%;height:100%;
+    display:flex;align-items:flex-end;justify-content:center;
+    transform-origin:center bottom;
+  }
+  /* 7 张姿势图堆叠，绝对定位同位置 */
+  .win-pet-img{
+    position:absolute;left:0;right:0;bottom:0;
+    width:100%;height:auto;max-height:78px;
+    object-fit:contain;object-position:center bottom;
+    opacity:0;transition:opacity .35s ease;
+    transform-origin:center bottom;
+    pointer-events:none;
+  }
+  .win-pet-img.active{opacity:1}
+
+  /* ===== walk：左右轻移 ===== */
+  .win-pet[data-pose="walk"] .win-pet-img.active{
+    animation:pet-walk-step 1.2s ease-in-out infinite;
+  }
+  @keyframes pet-walk-step{
+    0%,100%{transform:translateX(-2px) translateY(0)}
+    50%{transform:translateX(2px) translateY(-1px)}
+  }
+  /* ===== run：大幅左右 + 上下颠簸 ===== */
+  .win-pet[data-pose="run"] .win-pet-img.active{
+    animation:pet-run-bounce .55s ease-in-out infinite;
+  }
+  @keyframes pet-run-bounce{
+    0%,100%{transform:translateX(-4px) translateY(0)}
+    25%{transform:translateY(-3px)}
+    50%{transform:translateX(4px) translateY(0)}
+    75%{transform:translateY(-3px)}
+  }
+  /* ===== jump：原地跳 ===== */
+  .win-pet[data-pose="jump"] .win-pet-img.active{
+    animation:pet-jump-bounce .6s ease-in-out infinite;
+  }
+  @keyframes pet-jump-bounce{
+    0%,100%{transform:translateY(0) scaleY(1)}
+    30%{transform:translateY(-12px) scaleY(1.05)}
+    60%{transform:translateY(-4px) scaleY(.95)}
+  }
+  /* ===== lift：举东西（左右摆动） ===== */
+  .win-pet[data-pose="lift"] .win-pet-img.active{
+    animation:pet-lift-swing 1.6s ease-in-out infinite;
+  }
+  @keyframes pet-lift-swing{
+    0%,100%{transform:rotate(-4deg) scale(1)}
+    50%{transform:rotate(4deg) scale(1.04)}
+  }
+  /* ===== sit：身体微晃 + 脑袋轻点 ===== */
+  .win-pet[data-pose="sit"] .win-pet-img.active{
+    animation:pet-sit-bob 3.5s ease-in-out infinite;
+  }
+  @keyframes pet-sit-bob{
+    0%,100%{transform:translateY(0) scaleY(1)}
+    40%{transform:translateY(-2px) scaleY(1.02)}
+    70%{transform:translateY(1px) scaleY(.98)}
+  }
+  /* ===== climb：上下抖 ===== */
+  .win-pet[data-pose="climb"] .win-pet-img.active{
+    animation:pet-climb-shake .9s ease-in-out infinite;
+  }
+  @keyframes pet-climb-shake{
+    0%,100%{transform:translateY(0) rotate(0deg)}
+    25%{transform:translateY(-3px) rotate(2deg)}
+    50%{transform:translateY(-5px) rotate(0deg)}
+    75%{transform:translateY(-3px) rotate(-2deg)}
+  }
+  /* ===== lie：懒散翻身 ===== */
+  .win-pet[data-pose="lie"] .win-pet-img.active{
+    animation:pet-lie-breath 5s ease-in-out infinite;
+  }
+  @keyframes pet-lie-breath{
+    0%,100%{transform:scaleY(1) translateY(0)}
+    50%{transform:scaleY(1.05) translateY(-1px)}
+  }
+
+  /* 发消息时的反应动画：跳到气泡上 */
+  @keyframes pet-jump-to-bubble{
+    0%{transform:translateX(0) translateY(0) scale(1)}
+    20%{transform:translateX(-3px) translateY(-26px) scale(1.05)}
+    50%{transform:translateX(2px) translateY(-22px) scale(1.03)}
+    80%{transform:translateX(-1px) translateY(-8px) scale(1.01)}
+    100%{transform:translateX(0) translateY(0) scale(1)}
+  }
+  .win-pet.reacting .win-pet-img.active{animation:pet-jump-to-bubble .55s cubic-bezier(.36,.07,.19,.97) forwards!important}
+
+  /* ===== 桌宠 v3：三视图转身（front/side/back，scaleX 模拟水平旋转） ===== */
+  .win-pet{display:none} /* 隐藏旧 img 系统 */
+  .win-pet-rig{
+    position:absolute;left:-12px;bottom:-10px;width:96px;height:128px;
+    pointer-events:none;opacity:0;transition:opacity .3s ease;
+    filter:drop-shadow(0 3px 8px rgba(91,70,120,.4));
+    transform-origin:center bottom;
+    perspective:200px;
+    z-index:10;/* 始终盖在消息气泡之上 */
+  }
+  /* 实际显示尺寸（rig 内容 96x128，适配 chat window） */
+  .win-pet-rig{width:96px;height:128px}
+  .win-msg.assistant.has-pet .win-pet-rig{opacity:1}
+  /* 3 张视图叠放：back 在最底，front 在最顶 */
+  .rig-view{
+    position:absolute;left:0;top:0;width:100%;height:100%;
+    object-fit:contain;
+    pointer-events:none;
+    will-change:transform,opacity;
+    transition:opacity .15s ease;
+    transform-origin:50% 80%;
+  }
+  .rig-view-front{opacity:1;z-index:3}
+  .rig-view-side{opacity:0;z-index:2}
+  .rig-view-back{opacity:0;z-index:1}
+  /* front 容器含身体+两条腿 */
+  .rig-front-group{position:absolute;left:0;top:0;width:100%;height:100%;z-index:3}
+  .rig-view-body{left:18.09px;top:6.56px;width:54.00px;height:70.31px;object-fit:fill!important}
+  .rig-view-leg-l{left:29.25px;top:76.88px;width:17.06px;height:12.38px;z-index:4;transform-origin:50% 0%;will-change:transform;object-fit:fill!important}
+  .rig-view-leg-r{left:46.78px;top:76.88px;width:17.81px;height:12.66px;z-index:4;transform-origin:50% 0%;will-change:transform;object-fit:fill!important}
+  .rig-front-group .rig-view-body,
+  .rig-front-group .rig-view-leg-l,
+  .rig-front-group .rig-view-leg-r{position:absolute;display:block;pointer-events:none;object-fit:fill}
+  /* 默认隐藏腿：仅 walk/run 显示 */
+  .rig-view-leg-l,.rig-view-leg-r{opacity:0}
+  .win-pet-rig[data-pose="walk"] .rig-view-leg-l,
+  .win-pet-rig[data-pose="walk"] .rig-view-leg-r,
+  .win-pet-rig[data-pose="run"] .rig-view-leg-l,
+  .win-pet-rig[data-pose="run"] .rig-view-leg-r{opacity:1}
+
+  /* ===== idle: 整体呼吸 + 微摆 ===== */
+  .win-pet-rig[data-pose="idle"] .rig-view-front{animation:r-q-breath 3s ease-in-out infinite}
+  .win-pet-rig[data-pose="idle"] .rig-view-side{animation:r-q-breath 3s ease-in-out infinite}
+  .win-pet-rig[data-pose="idle"] .rig-view-back{animation:r-q-breath 3s ease-in-out infinite}
+  @keyframes r-q-breath{0%,100%{transform:translateY(0) scaleY(1)}50%{transform:translateY(-1.5px) scaleY(1.015)}}
+
+  /* ===== walk: 上下颠 + 左右轮替 + 两条腿交替向前迈 ===== */
+  .win-pet-rig[data-pose="walk"] .rig-front-group{animation:r-q-walk .5s steps(2,end) infinite}
+  @keyframes r-q-walk{
+    0%  {transform:translateY(0) rotate(-1deg)}
+    25% {transform:translateY(-5px) rotate(-1deg)}
+    50% {transform:translateY(0) rotate(1deg)}
+    75% {transform:translateY(-5px) rotate(1deg)}
+    100%{transform:translateY(0) rotate(-1deg)}
+  }
+  /* 左腿（仅靴子）：左脚迈前时 translateX(-3px) translateY(-2px) rotate(-25deg) */
+  .win-pet-rig[data-pose="walk"] .rig-view-leg-l{animation:r-q-leg-l .5s steps(2,end) infinite}
+  @keyframes r-q-leg-l{
+    0%  {transform:translate(0,0) rotate(0)}
+    50% {transform:translate(-3px,-2px) rotate(-25deg)}
+    100%{transform:translate(0,0) rotate(0)}
+  }
+  /* 右腿：与左腿反向 */
+  .win-pet-rig[data-pose="walk"] .rig-view-leg-r{animation:r-q-leg-r .5s steps(2,end) infinite}
+  @keyframes r-q-leg-r{
+    0%  {transform:translate(0,0) rotate(0)}
+    50% {transform:translate(3px,-2px) rotate(25deg)}
+    100%{transform:translate(0,0) rotate(0)}
+  }
+
+  /* ===== run: 更快节奏 + 大幅腿摆 ===== */
+  .win-pet-rig[data-pose="run"] .rig-front-group{animation:r-q-run .3s steps(2,end) infinite}
+  @keyframes r-q-run{
+    0%  {transform:translateY(0) rotate(-3deg)}
+    25% {transform:translateY(-7px) rotate(-3deg)}
+    50% {transform:translateY(0) rotate(3deg)}
+    75% {transform:translateY(-7px) rotate(3deg)}
+    100%{transform:translateY(0) rotate(-3deg)}
+  }
+  .win-pet-rig[data-pose="run"] .rig-view-leg-l{animation:r-q-run-leg-l .3s steps(2,end) infinite}
+  @keyframes r-q-run-leg-l{
+    0%  {transform:translate(0,0) rotate(0)}
+    50% {transform:translate(-4px,-2px) rotate(-25deg)}
+    100%{transform:translate(0,0) rotate(0)}
+  }
+  .win-pet-rig[data-pose="run"] .rig-view-leg-r{animation:r-q-run-leg-r .3s steps(2,end) infinite}
+  @keyframes r-q-run-leg-r{
+    0%  {transform:translate(0,0) rotate(0)}
+    50% {transform:translate(4px,-2px) rotate(25deg)}
+    100%{transform:translate(0,0) rotate(0)}
+  }
+
+  /* ===== run: 更快颠簸 + 前倾 ===== */
+  .win-pet-rig[data-pose="run"] .rig-view{animation:r-q-run .3s ease-in-out infinite}
+  @keyframes r-q-run{0%,100%{transform:translateY(0) rotate(-3deg)}50%{transform:translateY(-4px) rotate(-3deg)}}
+
+  /* ===== jump: 上下跳 ===== */
+  .win-pet-rig[data-pose="jump"] .rig-view{animation:r-q-jump .6s ease-in-out infinite}
+  @keyframes r-q-jump{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+
+  /* ===== lift: 上举 ===== */
+  .win-pet-rig[data-pose="lift"] .rig-view{animation:r-q-lift 1.2s ease-in-out infinite}
+  @keyframes r-q-lift{0%,100%{transform:translateY(-3px)}50%{transform:translateY(-5px)}}
+
+  /* ===== sit: 整体下蹲（缩小） ===== */
+  .win-pet-rig[data-pose="sit"] .rig-view{transform:translateY(6px) scaleY(.94);transform-origin:50% 100%}
+
+  /* ===== climb: 倾斜 ===== */
+  .win-pet-rig[data-pose="climb"] .rig-view{transform:rotate(12deg) translateY(-2px)}
+
+  /* ===== lie: 整体躺平 ===== */
+  .win-pet-rig[data-pose="lie"] .rig-view{transform:rotate(85deg) translateX(8px) translateY(20px)}
+
+  /* 窗口调整大小手柄 */
+  .win-resize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:se-resize}
+  .win-resize::after{content:"";position:absolute;right:4px;bottom:4px;width:8px;height:8px;
+    border-right:2px solid rgba(80,90,140,.3);border-bottom:2px solid rgba(80,90,140,.3)}
+  /* Dock 标签栏（窗口标签） */
+  .dock-win-tabs{display:flex;gap:3px;background:rgba(245,247,255,.82);border:1px solid rgba(80,90,140,.3);
+    border-radius:10px;padding:3px;margin-bottom:7px}
+  .dock-win-tab{
+    font-size:12px;color:#55557a;padding:4px 12px;border-radius:7px;cursor:pointer;user-select:none;
+    transition:all .15s;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+  }
+  .dock-win-tab.active{background:#5b6bb5;color:#fff}
+  .dock-win-tab:hover:not(.active){background:rgba(91,107,181,.15)}
+  .dock-new{display:flex;gap:6px;align-items:center}
+  .dock-new-btn{
+    border:none;background:rgba(90,105,175,.12);color:#5b6bb5;font-size:12px;padding:4px 10px;
+    border-radius:6px;cursor:pointer;font-family:inherit
+  }
+  .dock-new-btn:hover{background:rgba(90,105,175,.25)}
+  /* 窗口选择下拉菜单 */
+  .win-select{position:relative;display:inline-block}
+  .win-select-btn{
+    border:none;background:rgba(90,105,175,.15);color:#4d5ca5;font-size:12px;padding:4px 10px;
+    border-radius:6px;cursor:pointer;font-family:inherit;min-width:80px;text-align:left
+  }
+  .win-select-btn:hover{background:rgba(90,105,175,.25)}
+  .win-select-dropdown{
+    position:absolute;bottom:100%;left:0;margin-bottom:4px;min-width:160px;
+    background:rgba(250,251,255,.98);border:1px solid rgba(80,90,140,.3);
+    border-radius:8px;box-shadow:0 4px 16px rgba(40,50,100,.25);display:none;z-index:200
+  }
+  .win-select.open .win-select-dropdown{display:block}
+  .win-select-item{
+    padding:6px 10px;font-size:12px;color:#33334f;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+  }
+  .win-select-item:hover{background:rgba(91,107,181,.15)}
+  .win-select-item.active{background:rgba(91,107,181,.2);font-weight:600}
+  .win-select-empty{padding:8px 10px;font-size:11px;color:#9a9ab8}
+  /* ===== 窗口最小化小卡片 ===== */
+  .win-mini{
+    position:fixed;right:20px;bottom:20px;width:80px;height:60px;
+    background:rgba(250,251,255,.95);border:1px solid rgba(80,90,140,.4);
+    border-radius:10px;box-shadow:0 4px 16px rgba(40,50,100,.3);
+    backdrop-filter:blur(8px);z-index:520;cursor:pointer;
+    display:flex;flex-direction:column;padding:8px;gap:4px;
+    transition:transform .15s,box-shadow .15s
+  }
+  .win-mini:hover{transform:scale(1.05);box-shadow:0 6px 20px rgba(40,50,100,.4)}
+  .win-mini-title{
+    font-size:11px;font-weight:600;color:#33334f;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;text-align:center
+  }
+  .win-mini-kind{font-size:9px;color:#7a7aa8;text-align:center}
+  .win-mini-drag{flex:1;cursor:grab}
+  .win-mini-drag:active{cursor:grabbing}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="bgcolor"></div>
+  <canvas id="fx-bars"></canvas>
+<img class="p" src="/wallpaper/models/frieren/未标题-1.png" style="left:1280.0px;top:720.0px;width:2560.0px;height:1440.0px;opacity:1.000;z-index:4;transform:translate(-50%,-50%);opacity:0;" alt="">
+<div class="txt p" data-depth-x="0.3" data-depth-y="0.3" data-anchor-id="" style="left:773.8px;top:847.4px;width:448.0px;height:327.9px;opacity:0.700;z-index:19;--px:0.300;--py:0.300;color:#cfccfd;font-size:45px;transform:translate(-50%,-50%) rotate(0.272rad);">Fri</div>
+<div class="txt p" data-depth-x="0.3" data-depth-y="0.3" data-anchor-id="" style="left:1885.8px;top:537.4px;width:571.3px;height:327.9px;opacity:0.700;z-index:20;--px:0.300;--py:0.300;color:#cfccfd;font-size:45px;transform:translate(-50%,-50%) rotate(0.272rad);">eren</div>
+<div class="txt p" data-depth-x="0.27" data-depth-y="0.27" data-anchor-id="" style="left:755.7px;top:841.7px;width:448.0px;height:327.9px;opacity:0.700;z-index:21;--px:0.270;--py:0.270;color:#cfccfd;font-size:45px;transform:translate(-50%,-50%) rotate(0.272rad);">Fri</div>
+<div class="txt p" data-depth-x="0.27" data-depth-y="0.27" data-anchor-id="" style="left:1894.2px;top:524.3px;width:575.2px;height:327.9px;opacity:0.700;z-index:22;--px:0.270;--py:0.270;color:#cfccfd;font-size:45px;transform:translate(-50%,-50%) rotate(0.272rad);">eren</div>
+<img class="p" src="/wallpaper/models/frieren/左马尾.png" style="left:1034.8px;top:849.7px;width:537.0px;height:1197.0px;opacity:1.000;z-index:28;--px:-0.160;--py:-0.160;transform:translate(-50%,-50%);" alt="">
+<img class="p" src="/wallpaper/models/frieren/右马尾.png" style="left:1739.0px;top:848.9px;width:498.0px;height:1194.0px;opacity:1.000;z-index:29;--px:-0.160;--py:-0.160;transform:translate(-50%,-50%) rotate(-0.027rad);" alt="">
+<img class="p" src="/wallpaper/models/frieren/右耳.png" style="left:1707.7px;top:662.3px;width:445.0px;height:476.0px;opacity:1.000;z-index:30;--px:-0.100;--py:-0.280;transform:translate(-50%,-50%);" alt="">
+<img class="p" src="/wallpaper/models/frieren/左耳.png" style="left:1040.1px;top:679.6px;width:344.0px;height:325.0px;opacity:1.000;z-index:31;--px:-0.320;--py:-0.090;transform:translate(-50%,-50%);" alt="">
+<img class="p" src="/wallpaper/models/frieren/脖子.png" style="left:1382.1px;top:897.7px;width:824.0px;height:695.0px;opacity:1.000;z-index:32;--px:0.130;--py:0.130;transform:translate(-50%,-50%);" alt="">
+<img class="p" src="/wallpaper/models/frieren/脸.png" style="left:1325.6px;top:727.7px;width:661.0px;height:592.0px;opacity:1.000;z-index:33;--px:0.420;--py:0.420;transform:translate(-50%,-50%);" alt="">
+<img class="p expr" src="/wallpaper/models/frieren/aaaaaaaaaaaaaaazzz.png" style="left:1305.1px;top:790.3px;width:92.1px;height:83.7px;opacity:1.000;z-index:35;--px:0.650;--py:1.000;transform:translate(-50%,-50%);display:none;" alt="">
+<img class="p" src="/wallpaper/models/frieren/嘴.png" style="left:1316.4px;top:788.1px;width:31.7px;height:22.9px;opacity:1.000;z-index:38;--px:0.650;--py:1.000;transform:translate(-50%,-50%) rotate(0.096rad);" alt="">
+<img class="p breathe" src="/wallpaper/models/frieren/芙莉莲身体.png" style="left:1412.9px;top:1106.3px;width:1195.0px;height:646.0px;opacity:1.000;z-index:40;--px:0.200;--py:0.200;transform:translate(-50%,-50%);" alt="">
+<img class="p" src="/wallpaper/models/frieren/右眉填充.png" style="left:1384.6px;top:655.3px;width:94.2px;height:85.6px;opacity:1.000;z-index:42;--px:0.550;--py:0.900;transform:translate(-50%,-50%) rotate(0.158rad);" alt="">
+<img class="p" src="/wallpaper/models/frieren/左眉填充.png" style="left:1274.2px;top:650.7px;width:97.8px;height:72.2px;opacity:1.000;z-index:44;--px:0.550;--py:0.900;transform:translate(-50%,-50%) rotate(0.096rad);" alt="">
+<img class="p breathe" src="/wallpaper/models/frieren/芙莉莲头.png" style="left:1378.0px;top:634.6px;width:1277.0px;height:761.0px;opacity:1.000;z-index:45;--px:0.330;--py:0.330;transform:translate(-50%,-50%);" alt="">
+<img class="p eye" src="/wallpaper/models/frieren/右眼.png" style="left:1380.3px;top:725.2px;width:47.6px;height:41.8px;opacity:1.000;z-index:47;--px:0.600;--py:1.000;transform:translate(-50%,-50%) rotate(0.096rad);" alt="">
+<img class="p eye" src="/wallpaper/models/frieren/左眼.png" style="left:1261.5px;top:707.4px;width:47.6px;height:39.3px;opacity:1.000;z-index:49;--px:0.600;--py:1.000;transform:translate(-50%,-50%);" alt="">
+<img class="p" src="/wallpaper/models/frieren/右眉.png" style="left:1388.2px;top:655.5px;width:78.0px;height:70.6px;opacity:1.000;z-index:51;--px:0.550;--py:0.900;transform:translate(-50%,-50%) rotate(0.112rad);" alt="">
+<img class="p expr" src="/wallpaper/models/frieren/qqqqqqqqqqqq.png" style="left:1316.9px;top:653.3px;width:38.9px;height:38.2px;opacity:1.000;z-index:53;transform:translate(-50%,-50%);display:none;" alt="">
+<img class="p" src="/wallpaper/models/frieren/左眉.png" style="left:1275.7px;top:650.1px;width:68.1px;height:54.2px;opacity:1.000;z-index:55;--px:0.550;--py:0.900;transform:translate(-50%,-50%) rotate(0.135rad);" alt="">
+<img class="p" src="/wallpaper/models/frieren/鼻子.png" style="left:1317.7px;top:746.6px;width:91.2px;height:84.6px;opacity:1.000;z-index:57;--px:0.700;--py:1.050;transform:translate(-50%,-50%) rotate(0.096rad);" alt="">
+<div class="txt p" data-depth-x="0.0" data-depth-y="0.0" data-anchor-id="369" style="left:511.1px;top:244.6px;width:326.0px;height:154.4px;opacity:1.000;z-index:63;color:#cfccfd;font-size:45px;transform:translate(-50%,-50%);">12.22</div>
+<div class="txt p" data-depth-x="0.01" data-depth-y="0.01" data-anchor-id="" style="left:2237.4px;top:1269.1px;width:321.1px;height:152.1px;opacity:0.630;z-index:64;--px:0.010;--py:0.010;color:#cfccfd;font-size:45px;transform:translate(-50%,-50%);">12:34</div>
+<div class="txt p" data-depth-x="0.02" data-depth-y="0.02" data-anchor-id="" style="left:2223.5px;top:1267.9px;width:323.0px;height:153.0px;opacity:1.000;z-index:65;--px:0.020;--py:0.020;color:#cfccfd;font-size:45px;transform:translate(-50%,-50%);">12:34</div>
+<img class="p ring" src="/wallpaper/models/frieren/huan.png" style="left:321.2px;top:255.0px;width:140.0px;height:140.0px;opacity:1.000;z-index:66;--px:0.180;--py:0.180;transform:translate(-50%,-50%);filter:sepia(0.3) hue-rotate(200deg) saturate(0.4) brightness(1.08) opacity(0.20);" alt="">
+<img class="p ring" src="/wallpaper/models/frieren/huan.png" style="left:312.3px;top:484.9px;width:140.0px;height:140.0px;opacity:1.000;z-index:67;--px:0.180;--py:0.180;transform:translate(-50%,-50%);filter:sepia(0.3) hue-rotate(200deg) saturate(0.4) brightness(1.08) opacity(0.20);" alt="">
+<img class="p ring" src="/wallpaper/models/frieren/huan.png" style="left:328.6px;top:708.9px;width:140.0px;height:140.0px;opacity:1.000;z-index:68;--px:0.180;--py:0.180;transform:translate(-50%,-50%);filter:sepia(0.3) hue-rotate(200deg) saturate(0.4) brightness(1.08) opacity(0.20);" alt="">
+<img class="p ring" src="/wallpaper/models/frieren/huan.png" style="left:331.6px;top:926.9px;width:140.0px;height:140.0px;opacity:1.000;z-index:69;--px:0.180;--py:0.180;transform:translate(-50%,-50%);filter:sepia(0.3) hue-rotate(200deg) saturate(0.4) brightness(1.08) opacity(0.20);" alt="">
+<img class="p ring" src="/wallpaper/models/frieren/芙莉莲法杖cs2.png" style="left:321.2px;top:255.0px;width:184.2px;height:184.2px;opacity:0.700;z-index:74;--px:0.200;--py:0.200;transform:translate(-50%,-50%);filter:sepia(0.25) hue-rotate(200deg) saturate(0.45) brightness(1.06) opacity(0.15);" alt="">
+<img class="p ring" src="/wallpaper/models/frieren/huan.png" style="left:317.4px;top:252.5px;width:184.2px;height:184.2px;opacity:0.650;z-index:75;--px:0.200;--py:0.200;transform:translate(-50%,-50%);filter:sepia(0.3) hue-rotate(200deg) saturate(0.4) brightness(1.08) opacity(0.20);" alt="">
+<img class="p ring" src="/wallpaper/models/frieren/xinmeier.png" style="left:312.3px;top:484.9px;width:184.2px;height:184.2px;opacity:0.650;z-index:77;--px:0.200;--py:0.200;transform:translate(-50%,-50%);filter:sepia(0.25) hue-rotate(200deg) saturate(0.45) brightness(1.06) opacity(0.15);" alt="">
+<img class="p ring" src="/wallpaper/models/frieren/huan.png" style="left:316.2px;top:482.4px;width:184.2px;height:184.2px;opacity:0.650;z-index:78;--px:0.200;--py:0.200;transform:translate(-50%,-50%);filter:sepia(0.3) hue-rotate(200deg) saturate(0.4) brightness(1.08) opacity(0.20);" alt="">
+<img class="p ring" src="/wallpaper/models/frieren/feilun.png" style="left:328.6px;top:708.9px;width:184.2px;height:184.2px;opacity:0.650;z-index:80;--px:0.200;--py:0.200;transform:translate(-50%,-50%);filter:sepia(0.25) hue-rotate(200deg) saturate(0.45) brightness(1.06) opacity(0.15);" alt="">
+<img class="p ring" src="/wallpaper/models/frieren/huan.png" style="left:321.0px;top:708.9px;width:184.2px;height:184.2px;opacity:0.650;z-index:81;--px:0.200;--py:0.200;transform:translate(-50%,-50%);filter:sepia(0.3) hue-rotate(200deg) saturate(0.4) brightness(1.08) opacity(0.20);" alt="">
+<img class="p ring" src="/wallpaper/models/frieren/xiutaerke.png" style="left:331.6px;top:926.9px;width:184.2px;height:184.2px;opacity:0.650;z-index:83;--px:0.200;--py:0.200;transform:translate(-50%,-50%);filter:sepia(0.25) hue-rotate(200deg) saturate(0.45) brightness(1.06) opacity(0.15);" alt="">
+<img class="p ring" src="/wallpaper/models/frieren/huan.png" style="left:326.5px;top:932.0px;width:184.2px;height:184.2px;opacity:0.650;z-index:84;--px:0.200;--py:0.200;transform:translate(-50%,-50%);filter:sepia(0.3) hue-rotate(200deg) saturate(0.4) brightness(1.08) opacity(0.20);" alt="">
+<div class="anchor" data-id="200" style="left:1056.6px;top:1289.9px;width:3014.5px;height:537.2px"></div>
+<div class="anchor" data-id="206" style="left:1694.0px;top:1149.2px;width:3014.5px;height:483.1px"></div>
+<div class="anchor" data-id="233" style="left:1855.4px;top:476.4px;width:3546.0px;height:534.5px"></div>
+<div class="anchor" data-id="236" style="left:882.9px;top:691.7px;width:3546.0px;height:464.5px"></div>
+<div class="anchor" data-id="387" style="left:1332.7px;top:710.4px;width:442.1px;height:442.1px"></div>
+<div class="anchor" data-id="606" style="left:1333.9px;top:716.5px;width:426.7px;height:426.7px"></div>
+<div class="anchor" data-id="648" style="left:1337.3px;top:716.8px;width:426.7px;height:426.7px"></div>
+<div class="anchor" data-id="665" style="left:1337.3px;top:716.8px;width:426.7px;height:426.7px"></div>
+<div class="anchor" data-id="674" style="left:1337.3px;top:716.8px;width:426.7px;height:426.7px"></div>
+<div class="anchor" data-id="702" style="left:1313.9px;top:713.2px;width:426.7px;height:426.7px"></div>
+<div class="anchor" data-id="723" style="left:1337.3px;top:716.8px;width:426.7px;height:426.7px"></div>
+<div class="anchor" data-id="724" style="left:1337.3px;top:716.8px;width:426.7px;height:426.7px"></div>
+<div class="anchor" data-id="729" style="left:1337.3px;top:716.8px;width:426.7px;height:426.7px"></div>
+<div class="anchor" data-id="799" style="left:1333.9px;top:716.5px;width:426.7px;height:426.7px"></div>
+<div class="anchor" data-id="804" style="left:1333.9px;top:716.5px;width:426.7px;height:426.7px"></div>
+<div class="anchor" data-id="837" style="left:1337.3px;top:716.8px;width:426.7px;height:426.7px"></div>
+<div id="hitface" style="left:1232.7px;top:630.4px;width:642.1px;height:602.1px"></div>
+</div>
+<canvas id="fx"></canvas>
+<div id="bubble"></div>
+<div id="reply"></div>
+<div id="dock">
+  <!-- 窗口标签栏 -->
+  <div class="dock-win-tabs" id="win-tabs"></div>
+  <!-- 操作区 -->
+  <div class="dock-row">
+    <!-- 聊天/任务模式切换 -->
+    <div class="dock-tabs">
+      <span class="dock-tab active" data-mode="chat" id="mode-chat">聊天</span>
+      <span class="dock-tab" data-mode="task" id="mode-task">任务</span>
+    </div>
+    <!-- 窗口选择下拉 -->
+    <div class="win-select" id="win-select">
+      <button class="win-select-btn" id="win-select-btn">发送到：<span id="win-select-val">无窗口</span> ▾</button>
+      <div class="win-select-dropdown" id="win-select-dropdown"></div>
+    </div>
+    <!-- 多 agent 选择（任务模式） -->
+    <div class="agent-selector" id="agent-selector">
+      <div class="agent-chips" id="agent-chips"></div>
+      <div class="model-row" id="model-row" style="display:none">
+        <span class="model-label">模型</span>
+        <select id="model-select"></select>
+      </div>
+    </div>
+    <input id="dock-input" placeholder="输入消息…" style="width:240px" />
+    <button id="dock-send">发送</button>
+    <span class="conv-wrap">
+      <button id="history-btn" title="查看历史对话">历史</button>
+      <div class="conv-list" id="conv-list"></div>
+    </span>
+  </div>
+  <!-- 窗口容器 -->
+  <div id="win-container"></div>
+</div>
+<div id="history-panel">
+  <div class="hp-head"><span id="hp-title">历史对话</span><button class="hp-close" id="history-close">×</button></div>
+  <div class="hp-list" id="history-list"></div>
+</div>
+<div id="maestro" onclick="toggleList(event)">
+  <div class="m-card">
+    <div class="m-head"><span id="m-dot" class="m-dot"></span><span id="m-title">编排器连接中…</span></div>
+    <div class="m-sub" id="m-sub">等待 Maestro 服务响应</div>
+    <div class="m-offline" id="m-off">未连接 127.0.0.1:8787</div>
+    <div class="m-list" id="m-list"></div>
+  </div>
+</div>
+<script>
+(function(){
+"use use strict".replace("use use","use");
+
+  // ========== WindowManager 多窗口系统 ==========
+  var winContainer=document.getElementById("win-container");
+  var winTabsEl=document.getElementById("win-tabs");
+  var winZ=500; // z-index 计数器
+  var wins={}; // id -> {el, data, minimized}
+  var activeWinId=null;
+  var WIN_OFFSET=50; // 窗口堆叠偏移（向上）
+
+  // 窗口模板（无输入框，统一用底部 Dock 输入框）
+  function createWinHTML(id,title,kind){
+    return '<div class="win" data-id="'+id+'" style="display:none">'+
+      '<div class="win-head" data-win="drag">'+
+        '<span class="win-title">'+escapeHtml(title)+'</span>'+
+        '<span class="win-kind">['+(kind==="task"?"任务":"聊天")+']</span>'+
+        '<div class="win-btns">'+
+          '<button class="win-btn min" data-win="min" title="最小化">&#x2212;</button>'+
+          '<button class="win-btn max" data-win="max" title="最大化">&#x25A1;</button>'+
+          '<button class="win-btn close" data-win="close" title="关闭">×</button>'+
+        '</div>'+
+      '</div>'+
+      '<div class="win-body" id="win-body-'+id+'">'+
+        '<div class="win-pet" data-pose="walk">'+
+          '<div class="win-pet-body">'+
+            '<img class="win-pet-img" src="pet_poses/pet_walk_clean.png"  data-pose="walk"  alt="walk">'+
+            '<img class="win-pet-img" src="pet_poses/pet_run_clean.png"   data-pose="run"   alt="run">'+
+            '<img class="win-pet-img" src="pet_poses/pet_jump_clean.png"  data-pose="jump"  alt="jump">'+
+            '<img class="win-pet-img" src="pet_poses/pet_lift_clean.png"  data-pose="lift"  alt="lift">'+
+            '<img class="win-pet-img" src="pet_poses/pet_sit_clean.png"   data-pose="sit"   alt="sit">'+
+            '<img class="win-pet-img" src="pet_poses/pet_climb_clean.png" data-pose="climb" alt="climb">'+
+            '<img class="win-pet-img" src="pet_poses/pet_lie_clean.png"   data-pose="lie"   alt="lie">'+
+          '</div>'+
+        '</div>'+
+        '<div class="win-pet-rig" data-pose="idle" data-facing="0">'+
+          '<img class="rig-view rig-view-back"  src="pet_q/back.png"  alt="back">'+
+          '<img class="rig-view rig-view-side"  src="pet_q/side.png"  alt="side">'+
+          '<div class="rig-front-group">'+
+            '<img class="rig-view rig-view-body" src="pet_q/body_upper.png" alt="body">'+
+            '<img class="rig-view rig-view-leg-r" src="pet_q/leg_right.png" alt="leg-r">'+
+            '<img class="rig-view rig-view-leg-l" src="pet_q/leg_left.png" alt="leg-l">'+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+      '<div class="win-resize" data-win="resize"></div>'+
+    '</div>';
+  }
+
+  // 创建窗口
+  function winCreate(id,title,kind){
+    if(wins[id]){winActivate(id);return wins[id]}
+    var el=document.createElement("div");
+    el.innerHTML=createWinHTML(id,title,kind);
+    el=el.firstElementChild;
+    document.body.appendChild(el);
+    // 位置：右下角向上堆叠（不遮挡 dock）
+    var idx=Object.keys(wins).length;
+    el.style.right="20px";
+    el.style.bottom=(140+idx*WIN_OFFSET)+"px";
+    // 事件绑定
+    el.querySelector(".win-head").addEventListener("mousedown",function(e){winDragStart(e,id)});
+    el.querySelector(".win-resize").addEventListener("mousedown",function(e){winResizeStart(e,id)});
+    el.querySelectorAll(".win-btn").forEach(function(btn){
+      btn.addEventListener("click",function(e){
+        var act=btn.dataset.win;
+        if(act==="min")winMinimize(id);
+        else if(act==="max")winMaximize(id);
+        else if(act==="close")winClose(id);
+      });
+    });
+    wins[id]={el:el,data:{id:id,title:title,kind:kind},minimized:false};
+    setPetPose(wins[id],"idle"); // 初始化桌宠为 idle
+    startPetBlink(wins[id]);
+    // 初始化朝向：朝用户（面向）
+    setPetFacing(wins[id],0);
+    winActivate(id);
+    winTabsRender();
+    return wins[id];
+  }
+
+  // 激活窗口
+  function winActivate(id){
+    var w=wins[id];
+    if(!w)return;
+    if(activeWinId&&wins[activeWinId]){
+      wins[activeWinId].el.style.zIndex=winZ++;
+    }
+    activeWinId=id;
+    selectedWinId=id; // 自动选中该窗口
+    w.el.style.zIndex=winZ++;
+    w.el.style.display="flex";
+    w.el.classList.remove("minimized");
+    w.minimized=false;
+    // 移除小卡片
+    removeWinMini(id);
+    // 更新焦点视觉状态
+    updateWinFocus(id);
+    winTabsRender();
+    winSelectRender();
+    // 动态更新 dock 输入框 placeholder
+    updateDockPlaceholder();
+    dockInput.focus(); // 聚焦到底部输入框
+  }
+
+  // 更新所有窗口的焦点状态（给选中窗口加 .focused）
+  function updateWinFocus(focusedId){
+    Object.keys(wins).forEach(function(k){
+      if(k===focusedId) wins[k].el.classList.add("focused");
+      else wins[k].el.classList.remove("focused");
+    });
+  }
+
+  // 更新 dock 输入框 placeholder 为当前选中窗口名
+  function updateDockPlaceholder(){
+    var sel=wins[selectedWinId];
+    if(sel){
+      dockInput.placeholder="向【"+sel.data.title.slice(0,8)+"】发送消息…";
+    }else{
+      dockInput.placeholder="选择一个窗口或新建窗口后发送…";
+    }
+  }
+
+  // 最小化窗口
+  function winMinimize(id){
+    var w=wins[id];
+    if(!w)return;
+    w.minimized=true;
+    w.el.classList.add("minimized");
+    // 创建小卡片
+    createWinMini(id);
+    if(activeWinId===id){
+      // 激活其他窗口
+      var others=Object.keys(wins).filter(function(k){return k!==id&&!wins[k].minimized});
+      if(others.length)winActivate(others[others.length-1]);
+      activeWinId=null;
+    }
+    winTabsRender();
+  }
+
+  // 创建窗口小卡片
+  function createWinMini(id){
+    var w=wins[id];
+    if(!w)return;
+    // 如果已存在小卡片，先移除
+    var existing=document.getElementById("win-mini-"+id);
+    if(existing){existing.remove();}
+    var mini=document.createElement("div");
+    mini.id="win-mini-"+id;
+    mini.className="win-mini";
+    mini.innerHTML='<div class="win-mini-title">'+escapeHtml(w.data.title)+'</div>'+
+      '<div class="win-mini-kind">['+(w.data.kind==="task"?"任务":"聊天")+']</div>'+
+      '<div class="win-mini-drag" data-mini="drag"></div>';
+    document.body.appendChild(mini);
+    // 点击小卡片恢复窗口
+    mini.addEventListener("click",function(e){
+      if(e.target.dataset.mini==="drag")return;
+      winActivate(id);
+    });
+    // 小卡片拖动
+    var miniDrag=null,miniOffX=0,miniOffY=0;
+    mini.querySelector(".win-mini-drag").addEventListener("mousedown",function(e){
+      miniDrag=mini;
+      var rect=mini.getBoundingClientRect();
+      miniOffX=e.clientX-rect.left;
+      miniOffY=e.clientY-rect.top;
+      e.stopPropagation();
+    });
+    document.addEventListener("mousemove",function(e){
+      if(!miniDrag)return;
+      miniDrag.style.left=(e.clientX-miniOffX)+"px";
+      miniDrag.style.top=(e.clientY-miniOffY)+"px";
+      miniDrag.style.right="";miniDrag.style.bottom="";
+    });
+    document.addEventListener("mouseup",function(){
+      miniDrag=null;
+    });
+  }
+
+  // 移除窗口小卡片
+  function removeWinMini(id){
+    var mini=document.getElementById("win-mini-"+id);
+    if(mini){mini.remove();}
+  }
+
+  // 最大化窗口（简化：全屏）
+  function winMaximize(id){
+    var w=wins[id];
+    if(!w)return;
+    if(w.el.style.width==="100vw"){
+      // 恢复
+      w.el.style.width="";w.el.style.height="";w.el.style.right="";w.el.style.bottom="";
+    }else{
+      w.el.style.width="100vw";w.el.style.height="100vh";
+      w.el.style.right="0";w.el.style.bottom="0";
+    }
+  }
+
+  // 关闭窗口
+  function winClose(id){
+    var w=wins[id];
+    if(!w)return;
+    removeWinMini(id); // 移除小卡片
+    stopPetBlink(w);   // 停止桌宠眨眼定时器
+    w.el.remove();
+    delete wins[id];
+    if(activeWinId===id){
+      var others=Object.keys(wins).filter(function(k){return !wins[k].minimized});
+      if(others.length)winActivate(others[others.length-1]);
+      else{activeWinId=null;selectedWinId=null;updateDockPlaceholder()}
+    }
+    winTabsRender();
+    saveWindowsState(); // 保存窗口状态到 localStorage
+  }
+
+  // 保存窗口状态到 localStorage
+  function saveWindowsState(){
+    var state=Object.keys(wins).map(function(k){
+      var w=wins[k];
+      var el=w.el;
+      return {
+        id:w.data.id,
+        title:w.data.title,
+        kind:w.data.kind,
+        minimized:w.minimized,
+        left:el.style.left,
+        top:el.style.top,
+        right:el.style.right,
+        bottom:el.style.bottom,
+        width:el.style.width,
+        height:el.style.height
+      };
+    });
+    localStorage.setItem("maestro_windows",JSON.stringify(state));
+  }
+
+  // 从 localStorage 恢复窗口状态
+  function restoreWindows(){
+    try{
+      var data=localStorage.getItem("maestro_windows");
+      if(!data)return;
+      var state=JSON.parse(data);
+      if(!Array.isArray(state)||state.length===0)return;
+      // 按保存顺序恢复窗口
+      state.forEach(function(s){
+        var w=winCreate(s.id,s.title,s.kind);
+        if(!w)return;
+        var el=w.el;
+        if(s.left)el.style.left=s.left;
+        if(s.top)el.style.top=s.top;
+        if(s.right)el.style.right=s.right;
+        if(s.bottom)el.style.bottom=s.bottom;
+        if(s.width)el.style.width=s.width;
+        if(s.height)el.style.height=s.height;
+        if(s.minimized){
+          winMinimize(s.id);
+        }
+      });
+    }catch(e){
+      console.error("恢复窗口失败:",e);
+    }
+  }
+
+  // 页面加载完成后恢复窗口
+  setTimeout(restoreWindows,500);
+
+  // ========== 全局鼠标监听：让所有窗口的桌宠跟随鼠标转向 ==========
+  // 每个窗口的桌宠根据"鼠标相对该窗口中心的位置"决定朝向
+  document.addEventListener("mousemove",function(e){
+    var mx=e.clientX;
+    Object.keys(wins).forEach(function(id){
+      var w=wins[id];if(!w||w.minimized)return;
+      var rect=w.el.getBoundingClientRect();
+      // 窗口中心相对位置（-1 左 ~ 1 右）
+      var cx=rect.left+rect.width/2;
+      var nx=(mx-cx)/(rect.width/2); // -1~+1
+      // 鼠标在窗口内时角色面朝鼠标方向（angle 越大 = 鼠标越靠右 = 角色越转向）
+      setPetFacing(w,nx);
+    });
+  });
+
+  // ========== 桌宠姿态控制（基于三视图转身，8 姿态：idle/walk/run/jump/lift/sit/climb/lie） ==========
+  var PET_POSES=["idle","walk","run","jump","lift","sit","climb","lie"];
+  // 切换桌宠姿态：设 .win-pet-rig 的 data-pose（CSS keyframes 自动驱动）
+  function setPetPose(w,pose){
+    var rig=w.el.querySelector(".win-pet-rig");
+    if(!rig)return;
+    rig.dataset.pose=pose;
+    var oldPet=w.el.querySelector(".win-pet");
+    if(oldPet){
+      oldPet.dataset.pose=pose;
+      var imgs=oldPet.querySelectorAll(".win-pet-img");
+      for(var i=0;i<imgs.length;i++){
+        if(imgs[i].dataset.pose===pose)imgs[i].classList.add("active");
+        else imgs[i].classList.remove("active");
+      }
+    }
+  }
+  // 转身：angle ∈ [-1, 1]（-1=最右背对，1=最左背对；0=正脸）
+  // 用三张图 opacity + scaleX 交叉淡入淡出模拟水平旋转
+  function setPetFacing(w,angle){
+    var rig=w.el.querySelector(".win-pet-rig");
+    if(!rig)return;
+    // angle 范围：-1（背对，鼠标在最左侧）→ 0（正脸）→ 1（背对，鼠标在最右侧）
+    // 但 Q 版芙莉莲正面是"用户视角"，鼠标向右（angle=1）应该让角色往右看（侧面）
+    // 故正面朝鼠标方向 → angle 反映鼠标方向
+    var a=Math.max(-1,Math.min(1,angle));
+    rig.dataset.facing=a.toFixed(2);
+    var front=rig.querySelector(".rig-view-front");
+    var side=rig.querySelector(".rig-view-side");
+    var back=rig.querySelector(".rig-view-back");
+    if(!front||!side||!back)return;
+    var t=Math.abs(a); // 0=正面/背面，1=侧面
+    // 当 t<0.5：front/back 主导；t=0.5：side 主导
+    // 角度正→右侧，转身后看到 front 偏左 + side
+    if(t<0.33){
+      // 0°~60°：front (a>0) 或 back (a<0)
+      if(a>=0){
+        front.style.opacity=1; front.style.transform="scaleX(1)";
+        side.style.opacity=0;
+        back.style.opacity=0;
+      }else{
+        front.style.opacity=0;
+        side.style.opacity=0;
+        back.style.opacity=1; back.style.transform="scaleX(1)";
+      }
+    }else if(t<0.67){
+      // 60°~120°：side 主导
+      front.style.opacity=0;
+      back.style.opacity=0;
+      // 鼠标右 → 角色身体朝右 → 用户看到角色的左侧 → side scaleX(-1)
+      side.style.opacity=1;
+      side.style.transform=a>0?"scaleX(-1)":"scaleX(1)";
+    }else{
+      // >120°：过渡到对侧正面
+      if(a>=0){
+        // 鼠标最右 → 角色完全转身，用户看到角色背影 + 头部转过来
+        front.style.opacity=0;
+        back.style.opacity=1; back.style.transform="scaleX(-1)"; // 180° 翻转
+        side.style.opacity=0;
+      }else{
+        back.style.opacity=1; back.style.transform="scaleX(1)";
+        front.style.opacity=0;
+        side.style.opacity=0;
+      }
+    }
+  }
+  // 启动每个窗口的眨眼定时器（每 4-7 秒；新版三视图用动画 rotateY 模拟）
+  function startPetBlink(w){
+    if(w._blinkTimer)return;
+    function blink(){
+      var eyes=w.el.querySelectorAll(".rig-view");
+      eyes.forEach(function(e){
+        var cur=e.style.transform||"";
+        e.style.transform=cur+" scaleY(0.06)";
+      });
+      setTimeout(function(){
+        eyes.forEach(function(e){
+          // 重置 transform 让 CSS animation 接管
+          e.style.transform="";
+        });
+      },140);
+      w._blinkTimer=setTimeout(blink,3500+Math.random()*3500);
+    }
+    w._blinkTimer=setTimeout(blink,3000+Math.random()*2500);
+  }
+  function stopPetBlink(w){
+    clearTimeout(w._blinkTimer);w._blinkTimer=null;
+  }
+  // 随机换姿态（发消息/收到回复时触发）
+  function randomPetPose(w){
+    // 排除 jump（专给发消息瞬间）和 climb（任务场景）；包含 idle（自然状态）
+    var p=["idle","walk","run","sit","lie","lift"];
+    var chosen=p[Math.floor(Math.random()*p.length)];
+    setPetPose(w,chosen);
+    // 5-12 秒后恢复 idle
+    clearTimeout(w._petTimer);
+    w._petTimer=setTimeout(function(){setPetPose(w,"idle")},5000+Math.random()*7000);
+  }
+  // 让桌宠做指定动作一段时间再恢复（用于"发消息→jump"、"任务提交→climb"）
+  function petDoPose(w,pose,durationMs){
+    setPetPose(w,pose);
+    clearTimeout(w._petTimer);
+    w._petTimer=setTimeout(function(){setPetPose(w,"idle")},durationMs||3000);
+  }
+  // 窗口内发送消息（收消息时触发桌宠姿态）
+  function winSend(id){
+    var w=wins[id];
+    if(!w)return;
+    var inp=w.el.querySelector(".win-input");
+    var v=inp.value.trim();
+    if(!v)return;
+    inp.value="";
+    // 发消息：桌宠先 jump 一下，1.2s 后随机姿态
+    petDoPose(w,"jump",1200);
+    setTimeout(function(){randomPetPose(w);},1200);
+    // 根据 kind 发送
+    // 根据 kind 发送
+    if(w.data.kind==="chat"){
+      winAppendMsg(id,"user",v);
+      fetch(MAESTRO+"/api/chat/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:v,conv_id:id})})
+        .then(function(r){return r.json()})
+        .then(function(d){
+          if(d.error){winAppendMsg(id,"assistant","错误："+d.error);return}
+          winAppendMsg(id,"assistant",d.response||"");
+        })
+        .catch(function(){winAppendMsg(id,"assistant","连接失败")});
+    }else{
+      winAppendMsg(id,"user",v);
+      // 任务模式：桌宠先 climb 一下
+      petDoPose(w,"climb",1500);
+      fetch(MAESTRO+"/api/tasks",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:v,scenario:"auto",confirm:false,conv_id:id})})
+        .then(function(r){return r.json()})
+        .then(function(d){
+          winAppendMsg(id,"assistant","任务已提交："+(d.task_id||d.error||"完成"));
+          // 任务启动后让桌宠转 run（忙碌感）
+          petDoPose(w,"run",4000);
+        })
+        .catch(function(){winAppendMsg(id,"assistant","任务提交失败")});
+    }
+  }
+
+  // 窗口内追加消息
+  function winAppendMsg(id,role,text){
+    var w=wins[id];
+    if(!w)return;
+    var body=w.el.querySelector(".win-body");
+    var div=document.createElement("div");
+    div.className="win-msg "+role;
+    div.innerHTML=escapeHtml(text)+'<div class="win-time">'+new Date().toLocaleTimeString()+"</div>";
+    body.appendChild(div);
+    body.scrollTop=body.scrollHeight;
+    // 新 assistant 消息：把桌宠挂到这条气泡上（同时挂旧图系统和新的 rig）
+    if(role==="assistant"){
+      // 旧 img 系统（如果存在）
+      var oldPet=body.querySelector(".win-pet");
+      if(oldPet){
+        var oldParent=oldPet.closest(".win-msg");
+        if(oldParent)oldParent.classList.remove("has-pet");
+        div.classList.add("has-pet");
+        div.appendChild(oldPet);
+      }
+      // 新 rig 系统
+      var oldRig=body.querySelector(".win-pet-rig");
+      if(oldRig){
+        var oldRigParent=oldRig.closest(".win-msg");
+        if(oldRigParent)oldRigParent.classList.remove("has-pet");
+      }
+      div.classList.add("has-pet");
+      div.appendChild(oldRig);
+    }
+    // 如果是任务消息，更新窗口标题状态 + 桌宠切 run（忙碌感）
+    if(w.data.kind==="task"&&text.includes("任务已提交")){
+      var titleEl=w.el.querySelector(".win-title");
+      if(titleEl&&!titleEl.textContent.includes("⚙")){
+        titleEl.textContent="⚙ "+titleEl.textContent;
+      }
+      petDoPose(w,"run",4000);
+    }
+    // 收到助手回复时随机换姿态
+    if(role==="assistant")randomPetPose(w);
+  }
+
+  // 窗口拖动
+  var dragWin=null,dragOffX=0,dragOffY=0;
+  function winDragStart(e,id){
+    if(e.target.dataset.win)return;
+    var w=wins[id];
+    if(!w)return;
+    dragWin=w;
+    var rect=w.el.getBoundingClientRect();
+    dragOffX=e.clientX-rect.left;
+    dragOffY=e.clientY-rect.top;
+    winActivate(id);
+    document.addEventListener("mousemove",winDragMove);
+    document.addEventListener("mouseup",winDragEnd);
+  }
+  function winDragMove(e){
+    if(!dragWin)return;
+    // 边界检测：限制在屏幕内
+    var minX=0,minY=0,maxX=window.innerWidth-200,maxY=window.innerHeight-100;
+    var x=Math.max(minX,Math.min(e.clientX-dragOffX,maxX));
+    var y=Math.max(minY,Math.min(e.clientY-dragOffY,maxY));
+    dragWin.el.style.left=x+"px";
+    dragWin.el.style.top=y+"px";
+    dragWin.el.style.right="";dragWin.el.style.bottom="";
+  }
+  function winDragEnd(){
+    dragWin=null;
+    document.removeEventListener("mousemove",winDragMove);
+    document.removeEventListener("mouseup",winDragEnd);
+  }
+
+  // 窗口调整大小
+  var resizeWin=null,resizeW=0,resizeH=0,resizeX=0,resizeY=0;
+  function winResizeStart(e,id){
+    var w=wins[id];
+    if(!w)return;
+    resizeWin=w;
+    var rect=w.el.getBoundingClientRect();
+    resizeW=rect.width;resizeH=rect.height;
+    resizeX=e.clientX;resizeY=e.clientY;
+    winActivate(id);
+    document.addEventListener("mousemove",winResizeMove);
+    document.addEventListener("mouseup",winResizeEnd);
+  }
+  function winResizeMove(e){
+    if(!resizeWin)return;
+    var dw=e.clientX-resizeX,dh=e.clientY-resizeY;
+    resizeWin.el.style.width=Math.max(360,resizeW+dw)+"px";
+    resizeWin.el.style.height=Math.max(320,resizeH+dh)+"px";
+  }
+  function winResizeEnd(){
+    resizeWin=null;
+    document.removeEventListener("mousemove",winResizeMove);
+    document.removeEventListener("mouseup",winResizeEnd);
+  }
+
+  // 渲染窗口标签栏
+  function winTabsRender(){
+    var html="";
+    Object.keys(wins).forEach(function(k){
+      var w=wins[k];
+      var active=k===activeWinId?" active":"";
+      var minimized=w.minimized?" (最小化)":"";
+      html+='<span class="dock-win-tab'+active+'" data-win="tab" data-id="'+k+'">'+escapeHtml(w.data.title.slice(0,10))+minimized+'</span>';
+    });
+    winTabsEl.innerHTML=html;
+    winTabsEl.querySelectorAll(".dock-win-tab").forEach(function(t){
+      t.addEventListener("click",function(){
+        var id=t.dataset.id;
+        if(wins[id].minimized)winActivate(id);
+        else if(activeWinId===id)winMinimize(id);
+        else winActivate(id);
+      });
+    });
+  }
+
+  // 新建聊天/任务窗口
+  function newWin(kind){
+    var title=kind==="chat"?"新对话":"新任务";
+    var id="win_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
+    winCreate(id,title,kind);
+  }
+
+  // 暴露给外部
+  window.winCreate=winCreate;
+  window.winCreateFromConv=function(id,title,kind){
+    if(wins[id]){winActivate(id);return}
+    winCreate(id,title,kind);
+  };
+  window.winAppendMsg=winAppendMsg;
+
+  // 适配
+  var MAESTRO="http://127.0.0.1:8787";
+  var stage=document.getElementById("stage");
+  function fit(){stage.style.setProperty("--s",Math.min(innerWidth/2560,innerHeight/1440))}
+  fit(); addEventListener("resize",fit);
+
+  // 视差：每个 .p 有 data-depth-x/y（或 --px/--py）作为 scene 视差系数
+  // scene 视差正向=向观众（screen x=跟鼠标正方向；scene y 向上，CSS y 向下，所以 y 视差取反）
+  var mx=0,my=0;
+  addEventListener("mousemove",function(e){
+    mx=(e.clientX/innerWidth-0.5)*2;
+    my=(e.clientY/innerHeight-0.5)*2;
+  });
+  var PARALLAX=26;
+  function applyParallax(){
+    var els=stage.querySelectorAll(".p");
+    for(var i=0;i<els.length;i++){
+      var el=els[i];
+      var px=parseFloat(el.dataset.depthX||el.style.getPropertyValue("--px"))||0;
+      var py=parseFloat(el.dataset.depthY||el.style.getPropertyValue("--py"))||0;
+      // 保留元素已有的 transform（scale/rotate）
+      var baseT=el.dataset.baseT||"";
+      // 这里用单独 transform：translate(-px*mx*PARALLAX, -py*my*PARALLAX) 叠加在原 transform 上
+      // 镜头/透视模型：鼠标右→画面左、鼠标下→画面上（x 与 y 均取反，保持一致）
+      // 因为不同对象已有不同的 scale/rotate，简单的做法是外层包 translate；简化用内联
+      el.style.marginLeft=(-px*mx*PARALLAX).toFixed(2)+"px";
+      el.style.marginTop=(-py*my*PARALLAX).toFixed(2)+"px";
+    }
+    requestAnimationFrame(applyParallax);
+  }
+  applyParallax();
+
+  // 点击脸部彩蛋：眨眼 + 皱眉/嘟嘴表情切换 + 台词气泡
+  var LINES=["嗯？需要帮忙吗？","新的任务来了哦。","我在看着你干活。","放心吧，交给编排器。"];
+  var bubble=document.getElementById("bubble");
+  var lastBlink=0;
+  var hit=document.getElementById("hitface");
+  function toggleExpr(showFrown) {
+    // 表情层：嘟嘴/皱眉/嘴，按 src 识别（皱眉=qqqqqqqqqqqq.png，嘟嘴=aaaaaaaaaaaaaaazzz.png）
+    document.querySelectorAll("img.p").forEach(function(el) {
+      var src = el.getAttribute("src") || "";
+      if (/aaaaaaaaaaaaaaazzz\.png/.test(src)) el.style.display = "none"; // 嘟嘴不用
+      if (/qqqqqqqqqqqq\.png/.test(src)) el.style.display = showFrown ? "block" : "none";
+      if (/嘴\.png/.test(src)) el.style.display = showFrown ? "none" : "block";
+    });
+  }
+  if(hit)hit.addEventListener("click",function(e){
+    var now=Date.now();
+    if(now-lastBlink<600)return;
+    lastBlink=now;
+    // 眨眼：眼闭合
+    document.querySelectorAll("img.eye").forEach(function(el){
+      var t=el.style.transform;
+      if(!/scaleY/.test(t))el.style.transform=t+" scaleY(0.12)";
+      setTimeout(function(){el.style.transform=t},300);
+    });
+    // 皱眉：隐藏正常嘴，显示皱眉
+    toggleExpr(true);
+    setTimeout(function(){ toggleExpr(false); }, 1200);
+    bubble.textContent=LINES[Math.floor(Math.random()*LINES.length)];
+    bubble.style.display="block";
+    clearTimeout(bubble._t);
+    bubble._t=setTimeout(function(){bubble.style.display="none"},2600);
+  });
+
+  // 时钟（按 Clock 上/下 text 对象位置 + 日期）
+  var clockEls=document.querySelectorAll(".txt");
+  function tickClock(){
+    var n=new Date();
+    var hh=("00"+n.getHours()).slice(-2),mm=("00"+n.getMinutes()).slice(-2);
+    var s=hh+":"+mm;
+    var dateStr=n.getFullYear()+"/"+("00"+(n.getMonth()+1)).slice(-2)+"/"+("00"+n.getDate()).slice(-2);
+    // 找 Clock下/Clock上/日期 text 节点（按内容）
+    clockEls.forEach(function(el){
+      var t=el.textContent;
+      if(t==="HH:MM"||/^\d{2}:\d{2}$/.test(t))el.textContent=s;
+      else if(/\d{4}/.test(t)&&/\d{2}.\d{2}.\d{2}/.test(t))el.textContent=dateStr;
+      // Fri/eren/静态文本不动
+    });
+  }
+  tickClock(); setInterval(tickClock,1000);
+
+  // 特效 canvas：粒子（苍月草/雪/拖影） + 音条（composelayer 不渲染 DOM）
+  var fx=document.getElementById("fx");
+  var ctx=fx.getContext("2d");
+  var fxb=document.getElementById("fx-bars");
+  var ctxb=fxb.getContext("2d");
+  function sizeFx(){fx.width=fxb.width=innerWidth;fx.height=fxb.height=innerHeight}
+  sizeFx(); addEventListener("resize",sizeFx);
+
+  // 下雪
+  var SNOW=70,snow=[];
+  for(var i=0;i<SNOW;i++)snow.push({x:Math.random(),y:Math.random(),s:0.6+Math.random()*1.8,v:0.0004+Math.random()*0.0012,w:Math.random()*2-1,a:0.3+Math.random()*0.5});
+  // 拖影
+  var trail=[];
+  addEventListener("mousemove",function(e){trail.push({x:e.clientX,y:e.clientY,t:Date.now()});if(trail.length>40)trail.shift()});
+  // 苍月草
+  var blossoms=[];
+  var blossomImg=new Image();
+  blossomImg.src="/wallpaper/models/frieren/苍月草01.png";
+  addEventListener("click",function(e){
+    for(var i=0;i<6;i++)blossoms.push({x:e.clientX+(Math.random()-.5)*40,y:e.clientY+(Math.random()-.5)*30,vy:-0.6-Math.random()*0.8,vx:(Math.random()-.5)*0.7,rot:Math.random()*Math.PI*2,vr:(Math.random()-.5)*0.12,size:18+Math.random()*26,life:1});
+  });
+  // 音条数据（按 scene 收集）
+  var audio=new Array(32).fill(0);
+  if(window.wallpaperRegisterAudioListener){
+    try{wallpaperRegisterAudioListener(function(levels){for(var i=0;i<32;i++)audio[i]=levels&&levels[i]?levels[i]:0})}catch(e){}
+  }else{
+    (function sim(){var t=Date.now()/1000;for(var i=0;i<32;i++)audio[i]=0.12+0.18*Math.abs(Math.sin(t*1.4+i*0.55))+0.1*Math.abs(Math.sin(t*2.3+i*0.9));setTimeout(sim,100)})();
+  }
+  function drawBars(c,cx,cy,angleDeg,w,h,colors){
+    c.save();c.translate(cx,cy);c.rotate(angleDeg*Math.PI/180);
+    var N=32,barW=w/N*0.55,gap=w/N;var x0=-w/2;
+    for(var i=0;i<N;i++){var lv=audio[i]||0.08;var bh=Math.max(4,lv*h);var g=c.createLinearGradient(0,-bh/2,0,bh/2);g.addColorStop(0,colors[0]);g.addColorStop(1,colors[1]);c.fillStyle=g;c.fillRect(x0+i*gap,-bh/2,barW,bh)}
+    c.restore();
+  }
+  function drawBarsLayer(){
+    var W=fxb.width,H=fxb.height,s=Math.min(W/2560,H/1440);
+    ctxb.clearRect(0,0,W,H);
+    // 音条（用 scene [24][25] 的 css 坐标，按 1:1 缩放）——画在背景层（z-index 2），不遮挡芙莉莲
+    drawBars(ctxb,1415*s,434*s,15.6,900*s,300*s,["rgba(180,185,235,0.85)","rgba(150,155,220,0.25)"]);
+    drawBars(ctxb,1214*s,1010*s,15.6,900*s,300*s,["rgba(255,255,255,0.9)","rgba(220,225,255,0.3)"]);
+    requestAnimationFrame(drawBarsLayer);
+  }
+  drawBarsLayer();
+  function drawFx(){
+    var W=fx.width,H=fx.height,s=Math.min(W/2560,H/1440);
+    ctx.clearRect(0,0,W,H);
+    // 下雪
+    ctx.fillStyle="#fff";
+    for(var k=0;k<SNOW;k++){
+      var p=snow[k];p.y+=p.v;p.x+=Math.sin((Date.now()/1000)*0.8+k)*0.0004+p.w*0.00025;
+      if(p.y>1){p.y=-0.02;p.x=Math.random()}
+      if(p.x<-0.02)p.x=1.02;if(p.x>1.02)p.x=-0.02;
+      ctx.globalAlpha=p.a;ctx.beginPath();ctx.arc(p.x*W,p.y*H,p.s,0,Math.PI*2);ctx.fill();
+    }
+    ctx.globalAlpha=1;
+    // 拖影
+    var now=Date.now();
+    for(var t=0;t<trail.length;t++){var age=(now-trail[t].t)/500;if(age>1)continue;ctx.globalAlpha=(1-age)*0.3;ctx.fillStyle="#7a86cc";ctx.beginPath();ctx.arc(trail[t].x,trail[t].y,12*(1-age)+3,0,Math.PI*2);ctx.fill()}
+    ctx.globalAlpha=1;
+    // 苍月草
+    if(blossomImg.complete&&blossomImg.naturalWidth>0){
+      for(var b=blossoms.length-1;b>=0;b--){
+        var bl=blossoms[b];bl.x+=bl.vx;bl.y+=bl.vy;bl.rot+=bl.vr;bl.life-=0.012;
+        if(bl.life<=0){blossoms.splice(b,1);continue}
+        ctx.save();ctx.globalAlpha=Math.max(0,bl.life);ctx.translate(bl.x,bl.y);ctx.rotate(bl.rot);
+        var sz=bl.size*(0.5+0.5*bl.life);ctx.drawImage(blossomImg,-sz/2,-sz/2,sz,sz);ctx.restore();
+      }
+    }
+    requestAnimationFrame(drawFx);
+  }
+  drawFx();
+
+  // Maestro 状态
+  var dot=document.getElementById("m-dot"),title=document.getElementById("m-title"),sub=document.getElementById("m-sub"),off=document.getElementById("m-off"),listEl=document.getElementById("m-list");
+  function statusText(s){if(s==="done")return "已完成";if(s==="failed")return "失败";if(s==="running"||s==="pending")return "运行中";return s}
+  function poll(){
+    fetch(MAESTRO+"/api/tasks",{cache:"no-store"}).then(function(r){return r.json()}).then(function(tasks){
+      off.style.display="none";var latest=tasks[0];
+      var runn=tasks.filter(function(t){return t.status==="running"||t.status==="pending"}).length;
+      var done=tasks.filter(function(t){return t.status==="done"}).length;
+      var fail=tasks.filter(function(t){return t.status==="failed"}).length;
+      if(latest&&(latest.status==="running"||latest.status==="pending")){
+        dot.className="m-dot running";title.textContent="编排器运行中";
+        sub.innerHTML="当前：<b>"+latest.user_prompt+"</b><br>任务 "+tasks.length+" · 运行 "+runn+" · 完成 "+done+" · 失败 "+fail;
+      }else if(latest){
+        dot.className="m-dot "+(latest.status==="done"?"done":"failed");
+        title.textContent=latest.status==="done"?"编排器空闲":"最近任务失败";
+        sub.innerHTML="最近："+statusText(latest.status)+" — <b>"+latest.user_prompt+"</b><br>任务 "+tasks.length+" · 完成 "+done+" · 失败 "+fail;
+      }else{dot.className="m-dot";title.textContent="编排器就绪";sub.textContent="暂无任务 · 去 maestro web 面板发起"}
+      var html="";tasks.slice(0,10).forEach(function(t){var cls=t.status==="done"?"ok":(t.status==="failed"?"fail":"run");html+='<div class="m-item"><span class="st '+cls+'">'+statusText(t.status)+"</span>"+t.user_prompt+"</div>"});
+      listEl.innerHTML=html||'<div class="m-item" style="color:#888">暂无任务</div>';
+    }).catch(function(){dot.className="m-dot";title.textContent="编排器未连接";sub.textContent="未找到 Maestro 服务（127.0.0.1:8787）";off.style.display="block"})
+  }
+  poll();setInterval(poll,3000);
+  window.toggleList=function(e){e.stopPropagation();listEl.classList.toggle("show")};
+
+  // ---------- 会话隔离（对话隔离） ----------
+  function escapeHtml(s){return (s||"").replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
+  var currentConv=null; // {id, title} 当前会话；null=未选择（输入框默认新建对话）
+  var convKind="chat";  // 当前 hover 列表显示的会话类型（跟随 dockMode）
+  var convListEl=document.getElementById("conv-list");
+  function refreshPlaceholder(){
+    if(dockMode==="task"){dockInput.placeholder="交给编排器做什么（会新建对话）…";return}
+    dockInput.placeholder = currentConv ? "和「"+currentConv.title+"」说点什么…" : "开始新对话…（或点「历史」选择已有对话）";
+  }
+  function setCurrentConv(id,title){
+    currentConv={id:id,title:title};
+    refreshPlaceholder();
+    convListEl.querySelectorAll(".cv-item").forEach(function(el){
+      el.classList.toggle("active",el.getAttribute("data-id")===id);
+    });
+  }
+  function relTime(iso){
+    if(!iso)return "";
+    var t=new Date(iso);
+    if(isNaN(t.getTime()))return "";
+    var diff=(Date.now()-t.getTime())/1000;
+    if(diff<60)return "刚刚";
+    if(diff<3600)return Math.floor(diff/60)+" 分钟前";
+    if(diff<86400)return Math.floor(diff/3600)+" 小时前";
+    if(diff<86400*7)return Math.floor(diff/86400)+" 天前";
+    return (t.getMonth()+1)+"-"+t.getDate();
+  }
+  function renderConvItem(c){
+    var active=(currentConv&&currentConv.id===c.id)?" active":"";
+    var prev=(c.last_content||"").slice(0,28)||"暂无消息";
+    return '<div class="cv-item'+active+'" data-id="'+c.id+'" data-kind="'+(c.kind||"chat")+'" data-title="'+escapeHtml(c.title)+'">'+
+      '<div class="cv-title"><span class="cv-name" title="'+escapeHtml(c.title)+'">'+escapeHtml(c.title||"")+'</span>'+
+        '<span class="cv-ops">'+
+          '<button class="cv-op" data-act="rename" title="重命名">改名</button>'+
+          '<button class="cv-op" data-act="export" title="导出为 Markdown">导出</button>'+
+          '<button class="cv-op del" data-act="del" title="删除">删除</button>'+
+        '</span></div>'+
+      '<div class="cv-prev">'+escapeHtml(prev)+' · '+c.msg_count+'条 · '+relTime(c.updated_at)+'</div></div>';
+  }
+  function convDelete(id){
+    if(!confirm("确定删除这个对话吗？删除后不可恢复。"))return;
+    fetch(MAESTRO+"/api/conversations/"+encodeURIComponent(id),{method:"DELETE"})
+      .then(function(r){return r.json()})
+      .then(function(){
+        if(currentConv&&currentConv.id===id){currentConv=null;refreshPlaceholder()}
+        loadConvs();
+      })
+      .catch(function(){alert("删除失败，请重试")});
+  }
+  function convRename(id,item){
+    var title=prompt("输入新名称：",item.getAttribute("data-title"));
+    if(title===null)return;
+    title=title.trim();
+    if(!title)return;
+    fetch(MAESTRO+"/api/conversations/"+encodeURIComponent(id),{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:title})})
+      .then(function(r){return r.json()})
+      .then(function(){
+        if(currentConv&&currentConv.id===id)setCurrentConv(id,title);
+        loadConvs();
+      })
+      .catch(function(){alert("重命名失败，请重试")});
+  }
+  function convExport(id){
+    window.open(MAESTRO+"/api/conversations/"+encodeURIComponent(id)+"/export","_blank");
+  }
+  function loadConvs(kind){
+    kind=kind||convKind;
+    return fetch(MAESTRO+"/api/conversations?kind="+kind,{cache:"no-store"})
+      .then(function(r){return r.json()})
+      .then(function(d){
+        var list=d.conversations||[];
+        var newLabel=kind==="task"?"＋ 新建任务对话":"＋ 新建对话";
+        convListEl.innerHTML='<div class="cv-new" id="cv-new">'+newLabel+'</div>'+
+          (list.map(renderConvItem).join("")||'<div class="cv-empty">暂无会话</div>');
+        return list;
+      })
+      .catch(function(){convListEl.innerHTML='<div class="cv-empty">未连接编排器</div>'});
+  }
+  function createNewConv(title,kind){
+    return fetch(MAESTRO+"/api/conversations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:title||"新对话",kind:kind||convKind})})
+      .then(function(r){return r.json()})
+      .then(function(d){
+        setCurrentConv(d.conv_id,d.title);
+        loadConvs(d.kind);
+        return d;
+      });
+  }
+  // 点击会话 → 创建/激活窗口；点「＋ 新建对话」→ 创建新会话；点操作按钮 → 管理会话
+  convListEl.addEventListener("click",function(e){
+    var op=e.target.closest(".cv-op");
+    if(op){
+      e.stopPropagation();
+      var item=op.closest(".cv-item");
+      var id=item.getAttribute("data-id");
+      var act=op.getAttribute("data-act");
+      if(act==="del")convDelete(id);
+      else if(act==="rename")convRename(id,item);
+      else if(act==="export")convExport(id);
+      return;
+    }
+    if(e.target.closest("#cv-new")){
+      createNewConv("新对话",convKind).then(function(d){
+        winCreateFromConv(d.conv_id,d.title,d.kind);
+      });
+      return;
+    }
+    var item=e.target.closest(".cv-item");
+    if(!item)return;
+    var id=item.getAttribute("data-id"),title=item.getAttribute("data-title"),kind=item.getAttribute("data-kind");
+    // 创建或激活窗口
+    winCreateFromConv(id,title,kind);
+  });
+
+  // 底部输入框：聊天 / 派任务 双模式
+  var dockInput=document.getElementById("dock-input");
+  var dockSend=document.getElementById("dock-send");
+  var reply=document.getElementById("reply");
+  var dockMode="chat";
+  var dockTabs=document.querySelectorAll(".dock-tab");
+  function setMode(m){
+    dockMode=m;
+    convKind=m; // 聊天/任务历史分开：hover 显示对应类型会话
+    for(var i=0;i<dockTabs.length;i++)dockTabs[i].className="dock-tab"+(dockTabs[i].getAttribute("data-mode")===m?" active":"");
+    refreshPlaceholder();
+    loadConvs(m);
+    winSelectRender(); // 更新窗口选择器的"新建"选项
+    document.getElementById("agent-selector").className="agent-selector"+(m==="task"?" visible":"");
+    dockInput.focus();
+  }
+  for(var i=0;i<dockTabs.length;i++)(function(t){t.addEventListener("click",function(){setMode(t.getAttribute("data-mode"))})})(dockTabs[i]);
+  function showReply(txt,keep){
+    reply.textContent=txt;reply.style.display="block";
+    clearTimeout(reply._t);
+    reply._t=setTimeout(function(){reply.style.display="none"},keep||6000);
+  }
+  var lastSendTime=0;
+  var sendThrottle=1500; // 发送间隔1.5秒
+  function dockSendAction(){
+    var v=dockInput.value.trim();
+    if(!v)return;
+    // 节流检查
+    var now=Date.now();
+    if(now-lastSendTime<sendThrottle){
+      showReply("发送太频繁，请稍后再试",2000);
+      return;
+    }
+    lastSendTime=now;
+    var targetId=selectedWinId; // 当前选中的窗口
+    // 检查是否需要先创建新窗口和会话
+    if(pendingNewKind || !targetId){
+      // 先创建真正的会话
+      var title=pendingNewKind==="task"?"新任务":"新对话";
+      fetch(MAESTRO+"/api/conversations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:title,kind:pendingNewKind||"chat"})})
+        .then(function(r){return r.json()})
+        .then(function(d){
+          var realConvId=d.conv_id;
+          var newId=realConvId; // 用真实会话 ID 作为窗口 ID
+          winCreate(newId,title,pendingNewKind||"chat");
+          selectedWinId=newId;
+          pendingNewKind=null;
+          winSelectRender();
+          // 发送消息
+          doSend(newId,v);
+        })
+        .catch(function(){alert("创建会话失败")});
+      dockInput.value="";
+      return;
+    }
+    dockInput.value="";
+    // 发送到选中的窗口
+    doSend(targetId,v);
+  }
+  function doSend(targetId,v,retryCount){
+    if(!targetId || !wins[targetId]){dockInput.value=v;return}
+    retryCount=retryCount||0;
+    var w=wins[targetId];
+    winAppendMsg(targetId,"user",v);
+    // 桌宠触发：聊天 jump，任务 climb
+    if(w.data.kind==="chat")petDoPose(w,"jump",1200);
+    else petDoPose(w,"climb",1500);
+    if(w.data.kind==="chat"){
+      // 聊天模式：流式回复（SSE）
+      fetch(MAESTRO+"/api/chat/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:v,conv_id:targetId})})
+        .then(function(resp){
+          if(!resp.ok||!resp.body)throw new Error("http "+resp.status);
+          var reader=resp.body.getReader(),dec=new TextDecoder(),buf="";
+          var visible="";
+          function pump(){
+            return reader.read().then(function(x){
+              if(x.done){
+                // 流结束，显示完整回复
+                petDoPose(w,"walk",3000);
+                return;
+              }
+              buf+=dec.decode(x.value,{stream:true});
+              var parts=buf.split("\n\n");
+              buf=parts.pop();
+              for(var i=0;i<parts.length;i++){
+                var line=parts[i].trim();
+                if(line.indexOf("data:")!==0)continue;
+                try{
+                  var d=JSON.parse(line.slice(5).trim());
+                  if(d.delta)visible+=d.delta;
+                }catch(e){}
+              }
+              // 更新最后一条消息
+              var body=wins[targetId]&&wins[targetId].el.querySelector(".win-body");
+              if(!body)return;
+              var lastMsg=body.lastElementChild;
+              if(lastMsg&&lastMsg.classList.contains("assistant")){
+                lastMsg.innerHTML=escapeHtml(visible)+'<div class="win-time">'+new Date().toLocaleTimeString()+"</div>";
+              }else{
+                winAppendMsg(targetId,"assistant",visible);
+              }
+              body.scrollTop=body.scrollHeight;
+              return pump();
+            });
+          }
+          return pump();
+        })
+        .catch(function(e){
+          console.error("chat error:",e);
+          // 网络错误时重试
+          if(retryCount<2&&(e.message.includes("Failed to fetch")||e.message.includes("network")||e.message.includes("fetch"))){
+            winAppendMsg(targetId,"assistant","网络不稳定，正在重试...");
+            setTimeout(function(){doSend(targetId,v,retryCount+1)},1500);
+          }else{
+            winAppendMsg(targetId,"assistant","连接失败: "+e.message+"（点击消息重试）");
+            // 点击失败消息重试
+            var body=wins[targetId]&&wins[targetId].el.querySelector(".win-body");
+            if(body){
+              var lastMsg=body.lastElementChild;
+              if(lastMsg&&lastMsg.textContent.includes("连接失败")){
+                lastMsg.style.cursor="pointer";
+                lastMsg.onclick=function(){doSend(targetId,v,0);lastMsg.onclick=null;lastMsg.textContent="重试中...";};
+              }
+            }
+          }
+        });
+    }else{
+      // 任务模式：派发任务
+      var selectedAgents=Array.from(document.querySelectorAll("#agent-chips .agent-chip.selected"))
+        .map(function(ch){return ch.dataset.name});
+      if(selectedAgents.length===0)selectedAgents=["embedded"];
+      var selectedModel=document.getElementById("model-select").value||null;
+      fetch(MAESTRO+"/api/tasks",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:v,scenario:"auto",confirm:false,conv_id:targetId,selected_workers:selectedAgents,model:selectedModel})})
+        .then(function(r){return r.json()})
+        .then(function(d){
+          var taskId=d.task_id;
+          var agents=d.selected_workers&&d.selected_workers.length>0?d.selected_workers:["embedded"];
+          var modelInfo=d.model?" [模型："+d.model+"]":"";
+          winAppendMsg(targetId,"assistant","任务已提交 → "+agents.join(" + ")+modelInfo+"\nID："+(taskId||"完成"));
+          poll(); // 刷新任务列表
+          // 轮询任务状态直到完成
+          function waitTask(){
+            fetch(MAESTRO+"/api/tasks/"+taskId,{cache:"no-store"})
+              .then(function(r){return r.json()})
+              .then(function(t){
+                if(t.status==="running"||t.status==="pending"){
+                  setTimeout(waitTask,2000);
+                }else{
+                  // 任务完成，显示结果
+                  var result=t.result||t.error||"任务完成";
+                  winAppendMsg(targetId,"assistant","【任务完成】"+result);
+                }
+              });
+          }
+          if(taskId)waitTask();
+        })
+        .catch(function(){winAppendMsg(targetId,"assistant","任务提交失败");});
+    }
+  }
+  // 模式切换（聊天/任务）
+    document.getElementById("mode-chat").addEventListener("click",function(){setMode("chat")});
+    document.getElementById("mode-task").addEventListener("click",function(){setMode("task")});
+    // 加载 agent 列表
+    function loadAgents(){
+      fetch(MAESTRO+"/api/agents").then(function(r){return r.json()}).then(function(agents){
+        var chipsEl=document.getElementById("agent-chips");
+        chipsEl.innerHTML="";
+        agents.forEach(function(a){
+          var chip=document.createElement("label");
+          chip.className="agent-chip"+(a.available?"":" disabled");
+          chip.dataset.name=a.name;
+          chip.title=a.desc+(a.available?"":"（未连接）");
+          chip.innerHTML='<input type="checkbox" value="'+a.name+'" />'+
+            '<span class="chip-check"></span>'+
+            '<span>'+escapeHtml(a.label)+'</span>'+
+            '<span class="chip-dot"></span>';
+          chip.addEventListener("click",function(e){
+            if(chip.classList.contains("disabled"))return;
+            e.preventDefault();
+            chip.classList.toggle("selected");
+            var cb=chip.querySelector("input");
+            cb.checked=chip.classList.contains("selected");
+          });
+          chipsEl.appendChild(chip);
+          if(a.name==="embedded"&&a.available){
+            chip.classList.add("selected");
+            chip.querySelector("input").checked=true;
+          }
+        });
+      }).catch(function(){});
+    }
+    loadAgents();
+    // 加载模型列表
+    var _modelsCache=null;
+    function loadModels(){
+      fetch(MAESTRO+"/api/models").then(function(r){return r.json()}).then(function(models){
+        _modelsCache=models;
+        var sel=document.getElementById("model-select");
+        sel.innerHTML="";
+        var grouped={};
+        models.forEach(function(m){
+          var prov=m.provider||"other";
+          if(!grouped[prov])grouped[prov]={label:prov,models:[]};
+          grouped[prov].models.push(m);
+        });
+        var row=document.getElementById("model-row");
+        if(models.length===0){row.style.display="none";return;}
+        row.style.display="flex";
+        Object.keys(grouped).forEach(function(prov){
+          var optgroup=document.createElement("optgroup");
+          optgroup.label=grouped[prov].label;
+          grouped[prov].models.forEach(function(m){
+            var o=document.createElement("option");
+            o.value=m.id;
+            o.textContent=m.label+" — "+m.desc;
+            o.title=m.key_label||"";
+            optgroup.appendChild(o);
+          });
+          sel.appendChild(optgroup);
+        });
+        if(models.length>0)sel.value=models[0].id;
+      }).catch(function(){document.getElementById("model-row").style.display="none"});
+    }
+    loadModels();
+
+  // 窗口选择下拉菜单
+  var winSelectBtn=document.getElementById("win-select-btn");
+  var winSelectVal=document.getElementById("win-select-val");
+  var winSelectDropdown=document.getElementById("win-select-dropdown");
+  var selectedWinId=null; // 当前选中的窗口 ID
+  var pendingNewKind=null; // 待创建窗口的类型（用户点了新建但还没发消息）
+
+  function winSelectRender(){
+    var ids=Object.keys(wins);
+    var kindLabel=dockMode==="task"?"任务":"聊天";
+    var pendingLabel=pendingNewKind?"（待发送）":"";
+    var html='<div class="win-select-item" data-action="new">+ 新建 '+kindLabel+' 窗口'+pendingLabel+'</div>';
+    if(ids.length>0){
+      html+=ids.map(function(k){
+        var w=wins[k];
+        var active=k===selectedWinId?" active":"";
+        return '<div class="win-select-item'+active+'" data-id="'+k+'">'+escapeHtml(w.data.title.slice(0,15))+' ['+(w.data.kind==="task"?"任务":"聊天")+']</div>';
+      }).join("");
+    }else{
+      html+='<div class="win-select-empty">暂无打开的窗口</div>';
+    }
+    winSelectDropdown.innerHTML=html;
+    var sel=wins[selectedWinId];
+    if(sel)winSelectVal.textContent=sel.data.title.slice(0,8);
+    else winSelectVal.textContent="选择窗口";
+    // 绑定点击事件
+    winSelectDropdown.querySelectorAll(".win-select-item").forEach(function(it){
+      it.addEventListener("click",function(){
+        if(it.dataset.action==="new"){
+          // 标记待创建窗口（发送消息时才真正创建）
+          pendingNewKind=dockMode;
+          winSelectRender();
+        }else{
+          selectedWinId=it.dataset.id;
+          pendingNewKind=null; // 清除待创建状态
+          updateWinFocus(selectedWinId);
+          updateDockPlaceholder();
+          winSelectRender();
+        }
+        document.getElementById("win-select").classList.remove("open");
+        dockInput.focus();
+      });
+    });
+  }
+  // 点击按钮切换下拉
+  winSelectBtn.addEventListener("click",function(e){
+    e.stopPropagation();
+    winSelectRender();
+    document.getElementById("win-select").classList.toggle("open");
+  });
+  // 点击其他地方关闭下拉
+  document.addEventListener("click",function(){
+    document.getElementById("win-select").classList.remove("open");
+  });
+  // 窗口创建/关闭时更新下拉
+  var _winTabsRender=winTabsRender;
+  winTabsRender=function(){
+    _winTabsRender();
+    winSelectRender();
+  };
+
+  dockSend.addEventListener("click",dockSendAction);
+  dockInput.addEventListener("keydown",function(e){if(e.key==="Enter")dockSendAction()});
+
+  // 历史按钮：hover 出会话列表；点击查看当前会话历史消息
+  var historyBtn=document.getElementById("history-btn");
+  var historyPanel=document.getElementById("history-panel");
+  var historyList=document.getElementById("history-list");
+  function openHistory(convId,convTitle,retryCount){
+    retryCount=retryCount||0;
+    historyList.innerHTML='<div class="hp-empty">加载中…</div>';
+    document.getElementById("hp-title").textContent=convTitle?("历史对话 · "+convTitle):"历史对话";
+    historyPanel.classList.add("show");
+    var url=MAESTRO+"/api/chat/history?limit=100"+(convId?("&conv_id="+encodeURIComponent(convId)):"");
+    fetch(url,{cache:"no-store"})
+      .then(function(r){return r.json()})
+      .then(function(d){
+        var msgs=d.messages||[];
+        if(!msgs.length){historyList.innerHTML='<div class="hp-empty">这个对话还没有消息</div>';return}
+        var html="";
+        for(var i=0;i<msgs.length;i++){
+          var m=msgs[i];
+          var role=m.role==="user"?"user":"assistant";
+          var t=(m.created_at||"").replace("T"," ").slice(0,16);
+          html+='<div class="hp-msg '+role+'"><div>'+escapeHtml(m.content)+'</div><div class="hp-time">'+t+'</div></div>';
+        }
+        historyList.innerHTML=html;
+        historyList.scrollTop=historyList.scrollHeight;
+      })
+      .catch(function(){
+        // 加载失败，显示重试按钮
+        if(retryCount<2){
+          historyList.innerHTML='<div class="hp-empty" style="text-align:center">加载失败<br><input type="button" id="hp-retry" value="重试" style="margin-top:10px;padding:4px 14px;background:#5b6bb5;color:#fff;border:none;border-radius:4px;cursor:pointer"/></div>';
+          var retryBtn=document.getElementById("hp-retry");
+          if(retryBtn)retryBtn.onclick=function(){openHistory(convId,convTitle,retryCount+1)};
+        }else{
+          historyList.innerHTML='<div class="hp-empty">多次加载失败，请检查网络连接</div>';
+        }
+      });
+  }
+  historyBtn.addEventListener("click",function(){openHistory(currentConv?currentConv.id:null,currentConv?currentConv.title:"")});
+  document.getElementById("history-close").addEventListener("click",function(){historyPanel.classList.remove("show")});
+  historyPanel.addEventListener("click",function(e){if(e.target===historyPanel)historyPanel.classList.remove("show")});
+
+  // 历史面板拖拽：按住标题栏拖动（首次拖动时从 transform 居中切换为 left/top 定位）
+  var hpDrag={active:false,offX:0,offY:0,inited:false};
+  var hpHead=document.querySelector("#history-panel .hp-head");
+  hpHead.addEventListener("mousedown",function(e){
+    if(e.target.closest(".hp-close"))return; // 关闭按钮不触发拖动
+    var rect=historyPanel.getBoundingClientRect();
+    if(!hpDrag.inited){
+      historyPanel.style.left=rect.left+"px";
+      historyPanel.style.top=rect.top+"px";
+      historyPanel.style.transform="none";
+      hpDrag.inited=true;
+    }
+    hpDrag.active=true;
+    hpDrag.offX=e.clientX-rect.left;
+    hpDrag.offY=e.clientY-rect.top;
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove",function(e){
+    if(!hpDrag.active)return;
+    var r=historyPanel.getBoundingClientRect();
+    var x=Math.min(Math.max(e.clientX-hpDrag.offX,-r.width+60),innerWidth-60);
+    var y=Math.min(Math.max(e.clientY-hpDrag.offY,0),innerHeight-40);
+    historyPanel.style.left=x+"px";
+    historyPanel.style.top=y+"px";
+  });
+  document.addEventListener("mouseup",function(){hpDrag.active=false});
+  refreshPlaceholder();
+  loadConvs();
+
+  // ========== WebSocket 消息路由 ==========
+  // 连接后端 WebSocket，接收消息并根据 conv_id 路由到对应窗口
+  (function(){
+    var ws=null;
+    var reconnectTimer=null;
+    var WS_URL=MAESTRO.replace("http","ws")+"/ws";
+
+    function connectWS(){
+      try{
+        ws=new WebSocket(WS_URL);
+        ws.onopen=function(){
+          console.log("[WS] 已连接");
+          if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null}
+        };
+        ws.onmessage=function(event){
+          try{
+            var msg=JSON.parse(event.data);
+            // 消息格式：{conv_id, role, content} 或 {type, conv_id, ...}
+            var convId=msg.conv_id;
+            if(!convId)return; // 没有 conv_id 的消息忽略
+
+            var role=msg.role||"assistant";
+            var content=msg.content||msg.text||"";
+            if(!content)return;
+
+            // 根据 conv_id 查找窗口
+            var w=wins[convId];
+            if(w){
+              // 窗口存在，追加消息
+              winAppendMsg(convId,role,content);
+            }else{
+              // 窗口不存在，可以选择创建新窗口或忽略
+              // 这里选择忽略，也可以通知用户
+              console.log("[WS] 收到未知会话的消息，conv_id:",convId);
+            }
+          }catch(e){
+            console.error("[WS] 消息解析失败:",e);
+          }
+        };
+        ws.onclose=function(){
+          console.log("[WS] 连接关闭，3秒后重连...");
+          reconnectTimer=setTimeout(connectWS,3000);
+        };
+        ws.onerror=function(e){
+          console.error("[WS] 错误:",e);
+        };
+      }catch(e){
+        console.error("[WS] 连接失败:",e);
+        reconnectTimer=setTimeout(connectWS,5000);
+      }
+    }
+
+    // 页面加载后连接 WebSocket
+    setTimeout(connectWS,1000);
+  })();
+})();
+</script>
+</body>
+</html>

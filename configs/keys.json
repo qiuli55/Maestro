@@ -1,0 +1,35 @@
+{
+  "_comment": "Key 库：API Key 元数据（实际 key 值从环境变量读取，不写入此文件）",
+  "_how_to_use": "编辑此文件的 keys 列表，label 是显示名，env_var 是环境变量名，models 是该 key 支持的模型",
+  "keys": [
+    {
+      "id": "deepseek_main",
+      "label": "DeepSeek 主键",
+      "env_var": "DEEPSEEK_API_KEY",
+      "provider": "deepseek",
+      "models": [
+        {"id": "deepseek:deepseek-chat",     "label": "DeepSeek Chat (v3)",    "desc": "日常对话 / 轻量任务"},
+        {"id": "deepseek:deepseek-coder",    "label": "DeepSeek Coder",        "desc": "代码生成 / 重构"},
+        {"id": "deepseek:deepseek-reasoner", "label": "DeepSeek Reasoner",     "desc": "深度推理 / 复杂分析"}
+      ]
+    },
+    {
+      "id": "kimi_backup",
+      "label": "Kimi 备用键",
+      "env_var": "KIMI_API_KEY",
+      "provider": "kimi",
+      "models": [
+        {"id": "kimi:kimi-k2.6", "label": "Kimi K2.6", "desc": "长文本理解 / 国产模型"}
+      ]
+    },
+    {
+      "id": "minimax_key",
+      "label": "MiniMax 键",
+      "env_var": "MINIMAX_API_KEY",
+      "provider": "minimax",
+      "models": [
+        {"id": "image-01", "label": "Image Gen (abab6.5)", "desc": "图片生成"}
+      ]
+    }
+  ]
+}

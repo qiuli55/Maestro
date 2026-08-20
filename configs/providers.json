@@ -1,0 +1,14 @@
+{
+  "providers": {
+    "deepseek": {
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "model": "deepseek-chat"
+    },
+    "kimi": {
+      "base_url": "https://api.moonshot.cn/v1",
+      "api_key_env": "KIMI_API_KEY",
+      "model": "kimi-k2.6"
+    }
+  }
+}

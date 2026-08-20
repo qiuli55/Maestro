@@ -1,0 +1,20 @@
+{
+	"Version": 3,
+	"FileReferences": {
+		"Moc": "model.moc3",
+		"Textures": [
+			"model.2048/texture_00.png"
+		],
+		"DisplayInfo": "model.cdi3.json",
+		"Motions": {
+			"Idle": [
+				{
+					"File": "motion/Parameters.motion3.json"
+				},
+				{
+					"File": "motion/Idle.motion3.json"
+				}
+			]
+		}
+	}
+}
