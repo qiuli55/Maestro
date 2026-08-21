@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 允许 workflow 触发其他 workflow（如 release）
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================================
+  # 单 Python 版本快速反馈（PR 阶段只跑这个，节省 CI 时间）
+  # ============================================================================
+  fast:
+    name: Lint + Test (Python 3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff (lint)
+        run: ruff check src/
+
+      - name: Ruff (format check)
+        run: ruff format --check src/
+
+      - name: MyPy (type check)
+        run: mypy src/
+
+      - name: Pytest
+        env:
+          # CI 用内存 db（fast enough），不要污染磁盘
+          MAESTRO_DB: ":memory:"
+        run: pytest tests/ -v --tb=short --cov=src --cov-report=xml --cov-report=term
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+        continue-on-error: true  # 没配 Codecov 不报错
+
+  # ============================================================================
+  # 完整矩阵：多 Python 版本（仅 main push 触发，节省 PR 时间）
+  # ============================================================================
+  matrix:
+    name: Test Matrix (Python 3.11/3.12/3.13)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+        os: [ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Pytest
+        env:
+          MAESTRO_DB: ":memory:"
+        run: pytest tests/ -q --tb=short
+
+  # ============================================================================
+  # 密钥扫描（防硬编码进历史）
+  # ============================================================================
+  secrets-scan:
+    name: Secrets scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 全部历史
+
+      - name: TruffleHog (历史 + 当前)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra-args: --no-verification --fail-build
+          # 不阻止 PR（避免误报）；只在 main push 时 fail
+
+      - name: Git grep for known key patterns
+        run: |
+          # 扫常见 key 模式
+          if git grep -nE 'sk-[A-Za-z0-9_-]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}' -- ':!*.md' ':!*.lock' ':!docs/PRE_PUSH_CHECKLIST.md' ':!F:/C/tools/redact-secrets/expressions.txt'; then
+            echo "❌ 检测到疑似密钥！请检查。"
+            exit 1
+          fi
+          echo "✅ 无密钥"
+
+  # ============================================================================
+  # 代码提交规范（commit message 检查）
+  # ============================================================================
+  commit-lint:
+    name: Conventional commit message
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: wagoid/commitlint-github-action@v5
+        with:
+          configFile: .commitlintrc.json

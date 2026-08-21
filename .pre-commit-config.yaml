@@ -1,0 +1,49 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        files: ^src/.*\.py$
+      - id: ruff-format
+        files: ^src/.*\.py$
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        files: ^src/.*\.py$
+        args: [--config-file=pyproject.toml]
+        additional_dependencies: [types-PyYAML, types-requests]
+
+  - repo: local
+    hooks:
+      - id: pytest-quick
+        name: pytest quick (skip slow)
+        entry: pytest tests/ -q -x --no-header -m "not slow"
+        language: system
+        pass_filenames: false
+        types: [python]
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        # 扫 secrets 时跳过已知误报
+        exclude: |
+          (?x)^(
+            .*\.md|
+            .*\.lock|
+            docs/PRE_PUSH_CHECKLIST\.md|
+            F:/C/tools/redact-secrets/expressions\.txt
+          )$
+
+# 全局设置
+default_language_version:
+  python: python3.11
+fail_fast: false
+skip:
+  - "*.bak"
+  - "wallpaper/"
+  - "outputs/"
+  - "docs/img/"

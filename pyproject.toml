@@ -1,0 +1,162 @@
+[project]
+name = "maestro"
+version = "0.2.0"
+description = "Wallpaper-native multi-agent orchestrator (Orchestrator-Workers + WorkBuddy sandbox)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "qiuli55", email = "2709264162@qq.com"},
+]
+keywords = ["ai-agent", "multi-agent", "orchestrator", "wallpaper", "sandbox"]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: FastAPI",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+]
+
+# Runtime dependencies
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "openai>=1.40",
+    "PyYAML>=6.0",
+    "python-dotenv>=1.0",
+    "Pillow>=10.0",
+    "websockets>=12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+    "git-filter-repo>=2.45",
+]
+
+[project.urls]
+"Source" = "https://github.com/qiuli55/Maestro"
+"Bug Tracker" = "https://github.com/qiuli55/Maestro/issues"
+
+# ============================================================================
+# 工具配置
+# ============================================================================
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--showlocals",
+    "--tb=short",
+]
+pythonpath = ["src"]
+# 并发隔离：每个测试用独立临时 db（conftest 已设 MAESTRO_DB=tmp_path）
+# 但有些测试仍共享 .pytest_cache，需谨慎。filterwarnings 过滤无害警告。
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::UserWarning:.*maestro.workers",
+]
+
+[tool.coverage.run]
+source = ["src/maestro"]
+omit = [
+    "src/maestro/__main__.py",
+    "src/maestro/cli.py",     # CLI 入口，覆盖率意义不大
+    "src/maestro/config.py",
+    "src/maestro/workers/codebuddy.py",  # 休眠
+    "src/maestro/workers/workbuddy.py",  # 休眠
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+show_missing = true
+precision = 1
+fail_under = 60  # 总体覆盖率门槛（核心模块单独看）
+
+# ============================================================================
+# Ruff（lint + format）
+# ============================================================================
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [
+    ".venv",
+    "outputs",
+    "wallpaper/models",
+    "web/pet_rig",
+    "tests/fixtures",
+]
+
+[tool.ruff.lint]
+# 选比 PEP 8 更严的规则集（但不过分）
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # bugbear（常见 bug）
+    "C4",     # comprehensions
+    "UP",     # pyupgrade（用新语法）
+]
+ignore = [
+    "E501",   # 行长度（line-length 已配）
+    "B008",   # 函数调用作为默认参数（如 Path()）— 框架需要
+    "B904",   # raise from（项目里允许裸 raise）
+    "UP035",  # typing.Tuple/List 兼容性（兼容 Python 3.11+ 之前 import）
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["maestro", "tests"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ============================================================================
+# MyPy（type check）
+# ============================================================================
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # 渐进式：暂时不强求每个函数都标注
+disallow_incomplete_defs = false
+ignore_missing_imports = true  # openai / fastapi 缺 stub
+exclude = [
+    "outputs",
+    "wallpaper",
+    "web",
+    "tests",
+]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true  # 测试代码不强求类型
+
+# ============================================================================
+# pre-commit hooks（.pre-commit-config.yaml 配套）
+# ============================================================================
+
+[tool.codespell]
+skip = ".venv,outputs,wallpaper/models,web/pet_rig"
+ignore-words-list = "maestro,orchestrator"
