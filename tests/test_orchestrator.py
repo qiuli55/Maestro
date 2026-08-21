@@ -178,7 +178,9 @@ def test_cancel_mid_serial_stops_dispatch(tmp_db, monkeypatch):
     assert task["status"] == db.CANCELLED, "取消后任务应保持 CANCELLED"
     subs = db.get_subtasks(tmp_db, tid)
     assert calls["n"] == 1, "取消后不应再派发后续子任务"
-    assert subs[0]["status"] == db.DONE
+    assert subs[0]["status"] == db.CANCELLED, (
+        "第一个子任务被取消传染，应为 CANCELLED"
+    )
     assert all(s["status"] == db.PENDING for s in subs[1:]), "未派发的子任务保持 pending"
 
 

@@ -58,7 +58,8 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
             parallel     INTEGER NOT NULL DEFAULT 1,
             no_merge     INTEGER NOT NULL DEFAULT 0,
             created_at   TEXT NOT NULL,
-            updated_at   TEXT NOT NULL
+            updated_at   TEXT NOT NULL,
+            cancel_requested_at  TEXT  -- 用户发起取消的时间（ISO8601）；子任务 spawn 前检查，未走完的子任务被打断
         )
         """
     )
@@ -182,6 +183,7 @@ def _ensure_task_columns(conn: sqlite3.Connection):
         ("parallel", "INTEGER NOT NULL DEFAULT 1"),
         ("no_merge", "INTEGER NOT NULL DEFAULT 0"),
         ("conv_id", "TEXT"),
+        ("cancel_requested_at", "TEXT"),  # 用户发起取消时间（协作式取消标志）
     ):
         if col not in cols:
             _safe_alter(conn, f"ALTER TABLE tasks ADD COLUMN {col} {ddl}")
@@ -421,11 +423,20 @@ def get_events(conn: sqlite3.Connection, task_id: str) -> list[dict]:
 
 
 def cancel_task(conn: sqlite3.Connection, task_id: str) -> bool:
-    """置任务为 CANCELLED（终态）。仅允许未终态任务；返回是否生效。"""
+    """置任务为 CANCELLED（终态）。仅允许未终态任务；返回是否生效。
+
+    同时写 cancel_requested_at = now() — 协作式取消标志：
+    执行中的子任务跑完当前 step 后会检测到，下次 dispatch 时立即停止。
+    """
     task = get_task(conn, task_id)
     if not task or task["status"] in (DONE, FAILED, CANCELLED):
         return False
-    _set_status(conn.cursor(), "tasks", task_id, CANCELLED)
+    cur = conn.cursor()
+    _set_status(cur, "tasks", task_id, CANCELLED)
+    cur.execute(
+        "UPDATE tasks SET cancel_requested_at = COALESCE(cancel_requested_at, ?) WHERE id = ?",
+        (_now(), task_id),
+    )
     conn.commit()
     log_event(conn, task_id, "task cancelled")
     return True

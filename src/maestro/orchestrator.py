@@ -39,6 +39,12 @@ def _execute_subtask(db_path: str, task_id: str, subtask: dict, timeout: int, mo
     workdir = _workdir(task_id, sid)
     tconn = db.init_db(db_path)
     try:
+        # 协作式取消闸门：spawn 前最后一道检查——线程池并行派发后，
+        # 用户中途取消时这里能立即标记而不调 worker（避免浪费 token/时间）。
+        if _is_cancelled(tconn, task_id):
+            db.set_subtask_output(tconn, sid, db.CANCELLED,
+                                  error="[cancelled before dispatch]")
+            return
         db.set_subtask_status(tconn, sid, db.RUNNING)
         db.log_event(
             tconn,
@@ -172,9 +178,20 @@ def prepare_task(
 
 
 def _is_cancelled(conn, task_id: str) -> bool:
-    """轮询取消标志：执行中用户可取消（POST /api/tasks/{id}/cancel）。"""
+    """检查任务是否被取消（协作式）。
+
+    两种触发路径都算：
+    - status == CANCELLED（终态）
+    - cancel_requested_at 非空（用户已点取消，DB 已记录，但 status 可能还在 PENDING/RUNNING）
+
+    子任务 dispatch 前/完成后调；为 True 时停止后续调度、保持 CANCELLED 终态。
+    """
     t = db.get_task(conn, task_id)
-    return bool(t and t["status"] == db.CANCELLED)
+    if not t:
+        return False
+    if t["status"] == db.CANCELLED:
+        return True
+    return bool(t.get("cancel_requested_at"))
 
 
 def _push_result_to_conv(conn, task_id: str) -> None:
