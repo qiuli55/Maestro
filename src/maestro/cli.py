@@ -6,6 +6,7 @@ maestro status <task_id>
 maestro retry  <subtask_id>
 maestro reset  <task_id>
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,7 +43,7 @@ def _print_status(conn, task_id: str):
         md = Path(task["result_path"]).read_text(encoding="utf-8")
         marker = "## 审计"
         if marker in md:
-            print(md[md.index(marker):])
+            print(md[md.index(marker) :])
 
 
 def main(argv: list[str] | None = None):
@@ -62,9 +63,12 @@ def main(argv: list[str] | None = None):
 
     retry_p = sub.add_parser("retry", help="重派失败子任务")
     retry_p.add_argument("subtask_id")
-    retry_p.add_argument("--timeout", type=int,
-                         default=int(os.environ.get("WORKER_TIMEOUT", "600")),
-                         help="超时（秒，默认从 WORKER_TIMEOUT 环境变量读）")
+    retry_p.add_argument(
+        "--timeout",
+        type=int,
+        default=int(os.environ.get("WORKER_TIMEOUT", "600")),
+        help="超时（秒，默认从 WORKER_TIMEOUT 环境变量读）",
+    )
 
     reset_p = sub.add_parser("reset", help="清空任务（开发期）")
     reset_p.add_argument("task_id")
@@ -86,10 +90,15 @@ def main(argv: list[str] | None = None):
     if args.cmd == "run":
         prompt = _read_input(args)
         if not prompt.strip():
-            print("错误：输入为空"); return 1
+            print("错误：输入为空")
+            return 1
         task_id = orchestrator.run_task(
-            conn, prompt, scenario=args.scenario, worker_type=args.worker,
-            timeout=args.timeout, parallel=not args.serial,
+            conn,
+            prompt,
+            scenario=args.scenario,
+            worker_type=args.worker,
+            timeout=args.timeout,
+            parallel=not args.serial,
         )
         print(f"任务已提交：{task_id}")
         _print_status(conn, task_id)

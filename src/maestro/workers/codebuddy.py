@@ -6,6 +6,7 @@ subprocess（不带 shell）无法直接 exec .cmd。
 登录态在用户本地（首次需 `codebuddy` 唤起微信扫码），不依赖额外环境变量；
 Maestro 子任务产出由编排层落盘 res.output，本 worker 只返回文本，不写本地文件。
 """
+
 import os
 import shutil
 

@@ -2,12 +2,10 @@
 
 使用 MiniMax API Key，需要在环境变量或配置中设置。
 """
+
 import os
 import subprocess
-import json
-import tempfile
-import shutil
-from pathlib import Path
+
 from ..workers.base import WorkerResult, register
 
 # MiniMax CLI 路径（需要用 node 运行）
@@ -23,9 +21,9 @@ MMX_REGION = os.environ.get("MMX_REGION", "cn")
 
 if not MMX_API_KEY:
     import warnings
+
     warnings.warn(
-        "MMX_API_KEY 未设置；minimax worker 调用会失败。"
-        "请在 .env 或系统环境变量中设置 MMX_API_KEY 后重启服务。",
+        "MMX_API_KEY 未设置；minimax worker 调用会失败。请在 .env 或系统环境变量中设置 MMX_API_KEY 后重启服务。",
         stacklevel=2,
     )
 
@@ -58,8 +56,9 @@ def _run_mmx(args: list) -> tuple[str, str, int]:
 class MiniMaxWorker:
     name = "minimax"
 
-    def spawn(self, prompt: str, workdir: str, timeout: int,
-              task_id: str | None = None, subtask_id: str | None = None) -> WorkerResult:
+    def spawn(
+        self, prompt: str, workdir: str, timeout: int, task_id: str | None = None, subtask_id: str | None = None
+    ) -> WorkerResult:
         # task_id/subtask_id：审批归属用。minimax 无审批型工具，忽略。
         if not MMX_API_KEY:
             return WorkerResult("", "未设置 MMX_API_KEY 环境变量", False, 1)
@@ -109,29 +108,22 @@ class MiniMaxWorker:
         desc = prompt.replace("生成图片", "").replace("生成图", "").replace("image", "").replace("图片", "").strip()
         if not desc:
             desc = prompt
-        
-        stdout, stderr, rc = _run_mmx([
-            "image", "generate",
-            "--prompt", desc,
-            "--aspect-ratio", "16:9"
-        ])
-        
+
+        stdout, stderr, rc = _run_mmx(["image", "generate", "--prompt", desc, "--aspect-ratio", "16:9"])
+
         if rc != 0:
             return WorkerResult("", stderr or "图片生成失败", False, rc)
-        
+
         # mmx 会把图片保存到当前目录的 minimax-output 文件夹
         return WorkerResult(f"图片生成完成：{stdout}", "", False, 0)
 
     def _generate_video(self, prompt: str) -> WorkerResult:
         desc = prompt.replace("生成视频", "").replace("video", "").strip()
-        stdout, stderr, rc = _run_mmx([
-            "video", "generate",
-            "--prompt", desc
-        ])
-        
+        stdout, stderr, rc = _run_mmx(["video", "generate", "--prompt", desc])
+
         if rc != 0:
             return WorkerResult("", stderr or "视频生成失败", False, rc)
-        
+
         return WorkerResult(f"视频生成任务已提交：{stdout}", "", False, 0)
 
     def _generate_speech(self, prompt: str) -> WorkerResult:
@@ -139,25 +131,19 @@ class MiniMaxWorker:
         text = prompt.replace("生成语音", "").replace("配音", "").replace("speech", "").strip()
         if not text:
             text = prompt
-        
-        stdout, stderr, rc = _run_mmx([
-            "speech", "synthesize",
-            "--text", text
-        ])
-        
+
+        stdout, stderr, rc = _run_mmx(["speech", "synthesize", "--text", text])
+
         if rc != 0:
             return WorkerResult("", stderr or "语音合成失败", False, rc)
-        
+
         return WorkerResult(f"语音生成完成：{stdout}", "", False, 0)
 
     def _generate_music(self, prompt: str) -> WorkerResult:
         desc = prompt.replace("生成音乐", "").replace("music", "").strip()
-        stdout, stderr, rc = _run_mmx([
-            "music", "generate",
-            "--prompt", desc
-        ])
-        
+        stdout, stderr, rc = _run_mmx(["music", "generate", "--prompt", desc])
+
         if rc != 0:
             return WorkerResult("", stderr or "音乐生成失败", False, rc)
-        
+
         return WorkerResult(f"音乐生成完成：{stdout}", "", False, 0)

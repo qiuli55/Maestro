@@ -1,13 +1,14 @@
 """SQLite 状态层：任务 / 子任务 / 事件，支持重启恢复。"""
+
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # 状态机合法取值
 PENDING = "pending"
-READY = "ready"      # 拆分完成，等待用户确认/编辑（人工闸门）
+READY = "ready"  # 拆分完成，等待用户确认/编辑（人工闸门）
 RUNNING = "running"
 DONE = "done"
 FAILED = "failed"
@@ -22,7 +23,7 @@ DEFAULT_CONV_ID = "conv_default"  # 存量消息的默认会话
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
@@ -139,8 +140,21 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     _ensure_conv_column(conn)
     _ensure_conv_kind_column(conn)
     _ensure_default_conversation(conn)
+    # 索引（高频查询加速）。CREATE INDEX IF NOT EXISTS 已是幂等。
+    # subtasks.task_id：每次执行任务都按 task_id 查子任务列表
+    # task_events.task_id：每个任务详情页都按 task_id 查事件
+    _ensure_index(conn, "subtasks", "subtasks_task_id_idx", "(task_id)")
+    _ensure_index(conn, "task_events", "task_events_task_id_idx", "(task_id)")
+    _ensure_index(conn, "task_events", "task_events_subtask_id_idx", "(subtask_id)")
+    _ensure_index(conn, "approvals", "approvals_task_id_idx", "(task_id)")
+    _ensure_index(conn, "chat_messages", "chat_messages_conv_id_idx", "(conv_id)")
     conn.commit()
     return conn
+
+
+def _ensure_index(conn: sqlite3.Connection, table: str, index_name: str, cols: str) -> None:
+    """CREATE INDEX IF NOT EXISTS 幂等创建（SQLite 3.8+ 支持）。"""
+    conn.execute(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table} {cols}")
 
 
 def _safe_alter(conn: sqlite3.Connection, sql: str) -> None:
@@ -187,8 +201,7 @@ def _ensure_default_conversation(conn: sqlite3.Connection):
     都返回 0 时两个连接都尝试 INSERT，第二个触发 UNIQUE 失败。
     """
     conn.execute(
-        "INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at) "
-        "VALUES (?,?,?,?)",
+        "INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at) VALUES (?,?,?,?)",
         (DEFAULT_CONV_ID, "默认对话", _now(), _now()),
     )
     conn.execute(
@@ -216,9 +229,7 @@ def _set_status(cur: sqlite3.Cursor, table: str, row_id: str, status: str):
     )
 
 
-def create_task(
-    conn: sqlite3.Connection, task_id: str, user_prompt: str, conv_id: str | None = None
-) -> dict:
+def create_task(conn: sqlite3.Connection, task_id: str, user_prompt: str, conv_id: str | None = None) -> dict:
     now = _now()
     conn.execute(
         "INSERT INTO tasks (id, user_prompt, status, created_at, updated_at, conv_id) VALUES (?,?,?,?,?,?)",
@@ -252,8 +263,7 @@ def add_subtasks(conn: sqlite3.Connection, task_id: str, subtasks: list[dict]) -
         return []
     now = _now()
     rows = [
-        (st["id"], task_id, idx, st["desc"], st["worker_type"],
-         PENDING, st.get("source_segments"), now, now)
+        (st["id"], task_id, idx, st["desc"], st["worker_type"], PENDING, st.get("source_segments"), now, now)
         for idx, st in enumerate(subtasks)
     ]
     # executemany 一次 INSERT 多行，比循环单条 INSERT 快 ~10x
@@ -268,9 +278,7 @@ def add_subtasks(conn: sqlite3.Connection, task_id: str, subtasks: list[dict]) -
 
 
 def get_subtasks(conn: sqlite3.Connection, task_id: str) -> list[dict]:
-    rows = conn.execute(
-        "SELECT * FROM subtasks WHERE task_id=? ORDER BY idx", (task_id,)
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM subtasks WHERE task_id=? ORDER BY idx", (task_id,)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -279,19 +287,28 @@ def get_subtask(conn: sqlite3.Connection, subtask_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def set_task_params(conn: sqlite3.Connection, task_id: str, scenario: str | None = None,
-                    worker_type: str | None = None, parallel: bool | None = None,
-                    no_merge: bool | None = None):
+def set_task_params(
+    conn: sqlite3.Connection,
+    task_id: str,
+    scenario: str | None = None,
+    worker_type: str | None = None,
+    parallel: bool | None = None,
+    no_merge: bool | None = None,
+):
     """记录任务的执行参数（prepare 阶段写入，execute 阶段读取）。"""
     sets, vals = [], []
     if scenario is not None:
-        sets.append("scenario=?"); vals.append(scenario)
+        sets.append("scenario=?")
+        vals.append(scenario)
     if worker_type is not None:
-        sets.append("worker_type=?"); vals.append(worker_type)
+        sets.append("worker_type=?")
+        vals.append(worker_type)
     if parallel is not None:
-        sets.append("parallel=?"); vals.append(1 if parallel else 0)
+        sets.append("parallel=?")
+        vals.append(1 if parallel else 0)
     if no_merge is not None:
-        sets.append("no_merge=?"); vals.append(1 if no_merge else 0)
+        sets.append("no_merge=?")
+        vals.append(1 if no_merge else 0)
     if not sets:
         return
     sets.append("updated_at=?")
@@ -315,8 +332,7 @@ def replace_subtasks(conn: sqlite3.Connection, task_id: str, subtasks: list[dict
             """INSERT INTO subtasks
                (id, task_id, idx, desc, worker_type, status, source_segments, created_at, updated_at)
                VALUES (?,?,?,?,?,?,?,?,?)""",
-            (sid, task_id, idx, st["desc"], st["worker_type"],
-             PENDING, st.get("source_segments"), now, now),
+            (sid, task_id, idx, st["desc"], st["worker_type"], PENDING, st.get("source_segments"), now, now),
         )
         rows.append({**st, "id": sid})
     conn.commit()
@@ -329,8 +345,12 @@ def set_subtask_status(conn: sqlite3.Connection, subtask_id: str, status: str):
 
 
 def set_subtask_output(
-    conn: sqlite3.Connection, subtask_id: str, status: str,
-    output: str | None = None, error: str | None = None, result_path: str | None = None,
+    conn: sqlite3.Connection,
+    subtask_id: str,
+    status: str,
+    output: str | None = None,
+    error: str | None = None,
+    result_path: str | None = None,
 ):
     conn.execute(
         """UPDATE subtasks SET status=?, output=?, error=?, result_path=?, updated_at=?
@@ -340,8 +360,15 @@ def set_subtask_output(
     conn.commit()
 
 
-def log_event(conn: sqlite3.Connection, task_id: str, event: str,
-              subtask_id: str | None = None, data=None, *, _commit: bool = True):
+def log_event(
+    conn: sqlite3.Connection,
+    task_id: str,
+    event: str,
+    subtask_id: str | None = None,
+    data=None,
+    *,
+    _commit: bool = True,
+):
     """记录事件。data 为可 JSON 序列化的任意对象（dict/list/str/int…），
     存入前序列化为 JSON 字符串；序列化失败则退化为 str(data)。
 
@@ -389,9 +416,7 @@ def log_events_batch(conn: sqlite3.Connection, events: list[dict]) -> None:
 
 
 def get_events(conn: sqlite3.Connection, task_id: str) -> list[dict]:
-    rows = conn.execute(
-        "SELECT * FROM task_events WHERE task_id=? ORDER BY id", (task_id,)
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM task_events WHERE task_id=? ORDER BY id", (task_id,)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -418,9 +443,7 @@ def delete_task(conn: sqlite3.Connection, task_id: str) -> bool:
     return True
 
 
-def add_chat_message(
-    conn: sqlite3.Connection, role: str, content: str, conv_id: str = DEFAULT_CONV_ID
-) -> int:
+def add_chat_message(conn: sqlite3.Connection, role: str, content: str, conv_id: str = DEFAULT_CONV_ID) -> int:
     """追加一条闲聊记录（role: user/assistant），归入指定会话。返回消息 id。"""
     cur = conn.execute(
         "INSERT INTO chat_messages (role, content, created_at, conv_id) VALUES (?,?,?,?)",
@@ -430,14 +453,10 @@ def add_chat_message(
     return cur.lastrowid
 
 
-def get_chat_history(
-    conn: sqlite3.Connection, limit: int = 20, conv_id: str | None = None
-) -> list[dict]:
+def get_chat_history(conn: sqlite3.Connection, limit: int = 20, conv_id: str | None = None) -> list[dict]:
     """取某会话最近 limit 条闲聊（时间正序）。conv_id=None 返回全部（兼容）。"""
     if conv_id is None:
-        rows = conn.execute(
-            "SELECT * FROM chat_messages ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM chat_messages ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     else:
         rows = conn.execute(
             "SELECT * FROM chat_messages WHERE conv_id=? ORDER BY id DESC LIMIT ?",
@@ -453,9 +472,8 @@ def clear_chat_history(conn: sqlite3.Connection) -> None:
 
 # ---------- 会话（对话隔离） ----------
 
-def create_conversation(
-    conn: sqlite3.Connection, title: str | None = None, kind: str = "chat"
-) -> str:
+
+def create_conversation(conn: sqlite3.Connection, title: str | None = None, kind: str = "chat") -> str:
     """创建新会话，返回 conv_id。kind: chat/task（聊天/任务历史分开）。"""
     conv_id = f"conv_{os.urandom(4).hex()}"
     now = _now()
@@ -472,9 +490,7 @@ def get_conversation(conn: sqlite3.Connection, conv_id: str) -> dict | None:
     return dict(r) if r else None
 
 
-def list_conversations(
-    conn: sqlite3.Connection, kind: str | None = None
-) -> list[dict]:
+def list_conversations(conn: sqlite3.Connection, kind: str | None = None) -> list[dict]:
     """会话列表（按最近活跃倒序，可只取某类），带消息数与最后一条内容预览。"""
     if kind:
         rows = conn.execute(
@@ -505,9 +521,7 @@ def list_conversations(
 
 def touch_conversation(conn: sqlite3.Connection, conv_id: str) -> None:
     """更新会话活跃时间（对话发生时调用）。"""
-    conn.execute(
-        "UPDATE conversations SET updated_at=? WHERE id=?", (_now(), conv_id)
-    )
+    conn.execute("UPDATE conversations SET updated_at=? WHERE id=?", (_now(), conv_id))
     conn.commit()
 
 

@@ -6,6 +6,7 @@
 - 解析 stdout 的 json-lines：type=text 的 text 字段即回答；type=error 即失败。
 - --auto 自动批准权限（独立 workdir 风险可控）；--dir 指定工作目录。
 """
+
 from __future__ import annotations
 
 import json
@@ -24,15 +25,21 @@ class OpenCodeWorker(SubprocessWorker):
     def build_command(self, prompt: str, workdir: str) -> list[str]:
         model = os.environ.get("MAESTRO_MODEL", "deepseek-chat")
         return [
-            self.bin, "run", prompt,
-            "--dir", workdir,
-            "--model", f"deepseek/{model}",
+            self.bin,
+            "run",
+            prompt,
+            "--dir",
+            workdir,
+            "--model",
+            f"deepseek/{model}",
             "--auto",
-            "--format", "json",
+            "--format",
+            "json",
         ]
 
-    def spawn(self, prompt: str, workdir: str, timeout: int,
-              task_id: str | None = None, subtask_id: str | None = None) -> WorkerResult:
+    def spawn(
+        self, prompt: str, workdir: str, timeout: int, task_id: str | None = None, subtask_id: str | None = None
+    ) -> WorkerResult:
         res = super().spawn(prompt, workdir, timeout, task_id, subtask_id)
         if res.timed_out:
             return res
@@ -59,11 +66,7 @@ class OpenCodeWorker(SubprocessWorker):
                     texts.append(text)
             elif t == "error":
                 err = obj.get("error", {})
-                error = (
-                    err.get("data", {}).get("message")
-                    or err.get("name")
-                    or "opencode error"
-                )
+                error = err.get("data", {}).get("message") or err.get("name") or "opencode error"
 
         out = "\n".join(texts).strip()
         if error:

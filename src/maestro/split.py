@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from . import llm, config
+from . import config, llm
 
 _SPLIT_SYSTEM = config.PROMPTS.get("split_system") or """你是一个拆分器。把用户的长文本按语义/结构切成若干独立片段。
 只做拆分，不要总结、不要回答内容。
@@ -71,7 +71,7 @@ def split_plan(task_prompt: str, model: str | None = None) -> list[dict]:
     data = llm.complete_json(_PLAN_SYSTEM, task_prompt, model=model)
     tasks = data.get("tasks", []) if isinstance(data, dict) else []
     out = []
-    for i, t in enumerate(tasks):
+    for _i, t in enumerate(tasks):
         if not isinstance(t, dict):
             continue
         desc = (t.get("desc") or "").strip()

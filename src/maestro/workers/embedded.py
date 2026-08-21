@@ -4,12 +4,12 @@
 - 轻代码/文档生成：LLM 产出 + 读/写文件
 - 图像生成：调用 DALL-E API（需 OPENAI_API_KEY）
 """
+
 import os
-import base64
-import json
 import re
 import uuid as _uuid_for_image
 from pathlib import Path
+
 from .. import llm
 from .base import WorkerResult, register
 from .filetools import safe_read
@@ -25,6 +25,7 @@ def _ensure_output_dir() -> Path:
     """懒加载：首次写入时建目录。"""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     return OUTPUT_DIR
+
 
 _SYSTEM = (
     "你是 Maestro 的内嵌执行 worker，处理各种生成任务。\n"
@@ -48,9 +49,7 @@ _READ_TOOL = {
         "description": "读取工作目录内的一个文本文件，返回其内容",
         "parameters": {
             "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "相对工作目录的文件路径"}
-            },
+            "properties": {"path": {"type": "string", "description": "相对工作目录的文件路径"}},
             "required": ["path"],
         },
     },
@@ -65,7 +64,7 @@ _WRITE_TOOL = {
             "type": "object",
             "properties": {
                 "filename": {"type": "string", "description": "文件名（不含路径），如 demo.py、readme.md"},
-                "content": {"type": "string", "description": "文件内容"}
+                "content": {"type": "string", "description": "文件内容"},
             },
             "required": ["filename", "content"],
         },
@@ -79,9 +78,7 @@ _IMAGE_TOOL = {
         "description": "用 DALL-E 生成图片（需描述图片内容）",
         "parameters": {
             "type": "object",
-            "properties": {
-                "prompt": {"type": "string", "description": "图片描述（英文效果更好）"}
-            },
+            "properties": {"prompt": {"type": "string", "description": "图片描述（英文效果更好）"}},
             "required": ["prompt"],
         },
     },
@@ -119,7 +116,7 @@ def _executor(workdir: str, task_id: str | None = None, subtask_id: str | None =
     def run(name: str, args: dict) -> str:
         if name == "read_file":
             return safe_read(args.get("path", ""), workdir)
-        
+
         elif name == "write_file":
             filename = args.get("filename", "")
             content = args.get("content", "")
@@ -135,18 +132,19 @@ def _executor(workdir: str, task_id: str | None = None, subtask_id: str | None =
                 return f"[write_file] 成功：{out_path}"
             except Exception as e:
                 return f"[write_file] 失败：{e}"
-        
+
         elif name == "generate_image":
             prompt = args.get("prompt", "")
             if not prompt:
                 return "[generate_image] 错误：需要 prompt 参数"
-            
+
             api_key = os.environ.get("OPENAI_API_KEY")
             if not api_key:
                 return "[generate_image] 错误：未设置 OPENAI_API_KEY 环境变量（需要 DALL-E 生成图片）"
-            
+
             try:
                 from openai import OpenAI  # noqa: F401 - 本地延迟导入
+
                 client = OpenAI(api_key=api_key)
                 response = client.images.generate(
                     model="dall-e-3",
@@ -158,6 +156,7 @@ def _executor(workdir: str, task_id: str | None = None, subtask_id: str | None =
                 image_url = response.data[0].url
                 # 下载图片并保存（加 30s 超时，避免 DALL-E CDN 挂起时 worker 卡死）
                 import urllib.request
+
                 img_data = urllib.request.urlopen(image_url, timeout=30).read()
                 # 文件名：UUID 兜底，避免不同 prompt 前 20 字相同导致覆盖
                 safe_hint = re.sub(r"[^\w]", "_", prompt[:20])[:20]
@@ -167,7 +166,7 @@ def _executor(workdir: str, task_id: str | None = None, subtask_id: str | None =
                 return f"[generate_image] 成功：{img_path}\n图片 URL: {image_url}"
             except Exception as e:
                 return f"[generate_image] 失败：{e}"
-        
+
         elif name == "list_files":
             try:
                 files = list(OUTPUT_DIR.glob("*"))
@@ -184,6 +183,7 @@ def _executor(workdir: str, task_id: str | None = None, subtask_id: str | None =
             return run_command(cmd, workdir, task_id=task_id, subtask_id=subtask_id)
 
         return f"[未知工具] {name}"
+
     return run
 
 
@@ -191,8 +191,9 @@ def _executor(workdir: str, task_id: str | None = None, subtask_id: str | None =
 class EmbeddedWorker:
     name = "embedded"
 
-    def spawn(self, prompt: str, workdir: str, timeout: int,
-              task_id: str | None = None, subtask_id: str | None = None) -> WorkerResult:
+    def spawn(
+        self, prompt: str, workdir: str, timeout: int, task_id: str | None = None, subtask_id: str | None = None
+    ) -> WorkerResult:
         try:
             out = llm.complete_with_tools(
                 system=_SYSTEM,

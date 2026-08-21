@@ -2,6 +2,7 @@
 
 不强制存在——缺失时各模块用内联默认值。配置文件优先级高于代码内联。
 """
+
 from __future__ import annotations
 
 import json
@@ -65,26 +66,28 @@ def get_available_models() -> list[dict]:
     """返回所有已配置（环境变量存在）的模型列表。"""
     keys_data = load_keys()
     available = []
-    for key_entry in (keys_data.get("keys") or []):
+    for key_entry in keys_data.get("keys") or []:
         env_var = key_entry.get("env_var", "")
         # 检查环境变量是否存在（key 已配置）
         if env_var and os.environ.get(env_var):
-            for model in (key_entry.get("models") or []):
-                available.append({
-                    "id": model["id"],
-                    "label": model["label"],
-                    "desc": model.get("desc", ""),
-                    "provider": key_entry.get("provider", ""),
-                    "key_label": key_entry.get("label", env_var),
-                })
+            for model in key_entry.get("models") or []:
+                available.append(
+                    {
+                        "id": model["id"],
+                        "label": model["label"],
+                        "desc": model.get("desc", ""),
+                        "provider": key_entry.get("provider", ""),
+                        "key_label": key_entry.get("label", env_var),
+                    }
+                )
     return available
 
 
 def resolve_model_to_key(model_id: str) -> str | None:
     """根据模型 ID 找到对应的环境变量名。"""
     keys_data = load_keys()
-    for key_entry in (keys_data.get("keys") or []):
-        for model in (key_entry.get("models") or []):
+    for key_entry in keys_data.get("keys") or []:
+        for model in key_entry.get("models") or []:
             if model["id"] == model_id:
                 return key_entry.get("env_var")
     return None

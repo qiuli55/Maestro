@@ -1,4 +1,5 @@
 """octo worker：headless 单发，DeepSeek 经 OPENAI_* 环境变量接入。"""
+
 import os
 
 from .base import SubprocessWorker, register
@@ -14,8 +15,15 @@ class OctoWorker(SubprocessWorker):
         # --no-tools 纯文本产出（内嵌式执行，不做文件改动）
         # --no-save 不残留 session；--quiet 少状态噪音
         return [
-            self.bin, "--provider", "openai", "--model", model,
-            "--no-tools", "--no-save", "--quiet", prompt,
+            self.bin,
+            "--provider",
+            "openai",
+            "--model",
+            model,
+            "--no-tools",
+            "--no-save",
+            "--quiet",
+            prompt,
         ]
 
     def extra_env(self) -> dict:

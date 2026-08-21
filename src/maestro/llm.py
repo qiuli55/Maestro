@@ -5,6 +5,7 @@
 多 provider：model 参数支持 "provider:model" 语法（如 "kimi:kimi-k2.6"），
 不带前缀走默认 DeepSeek。provider 定义见 configs/providers.json。
 """
+
 import json
 import os
 import time
@@ -88,7 +89,8 @@ def complete(
                 # 指数退避 + jitter：1s, 2s, 4s, 8s...（封顶 30s），
                 # + 0~1s 随机抖动避免雪崩。
                 import random
-                backoff = min(30, 2 ** attempt) + random.random()
+
+                backoff = min(30, 2**attempt) + random.random()
                 time.sleep(backoff)
     raise RuntimeError(f"LLM 调用失败（已重试 {max_retries} 次）: {last_err}")
 
@@ -122,9 +124,7 @@ def complete_with_tools(
         {"role": "user", "content": user},
     ]
     for _ in range(max_rounds):
-        resp = client.chat.completions.create(
-            model=model_name, messages=msgs, tools=tools, temperature=0.2
-        )
+        resp = client.chat.completions.create(model=model_name, messages=msgs, tools=tools, temperature=0.2)
         msg = resp.choices[0].message
         if not getattr(msg, "tool_calls", None):
             return msg.content or ""
@@ -137,15 +137,18 @@ def complete_with_tools(
             except json.JSONDecodeError:
                 args = {}
             result = tool_executor(tc.function.name, args)
-            msgs.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": result,
-            })
+            msgs.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
+                }
+            )
     # 达到轮数上限仍未给出最终文本：日志警告 + 返回空串。
     # 旧实现是返回最后一次 tool result（语义错误：tool 输出不是 assistant 回答），
     # 现在改返回空串，让调用方走错误"处理而非"得到半成品答案"路径。
     import warnings
+
     warnings.warn(
         f"LLM 在 {max_rounds} 轮工具调用后仍没给最终文本（msgs={len(msgs)}）",
         RuntimeWarning,

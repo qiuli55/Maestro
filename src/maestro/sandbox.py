@@ -13,13 +13,14 @@
 
 SQLite 只做持久化展示（快照/API 可见），内存 Event 做跨线程唤醒。
 """
+
 from __future__ import annotations
 
 import os
 import threading
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from . import db
 
@@ -40,9 +41,7 @@ class ApprovalRequest:
     subtask_id: str | None
     created_at: str
     decision: str = "pending"  # pending / approved / rejected（超时仍为 pending，调用方判 timedout）
-    event: threading.Event = field(
-        default_factory=threading.Event, repr=False, compare=False
-    )
+    event: threading.Event = field(default_factory=threading.Event, repr=False, compare=False)
 
 
 # 进程内注册表：approval_id -> ApprovalRequest。SQLite 持久化展示，Event 做唤醒。
@@ -54,7 +53,7 @@ _notify_hooks: list = []
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # 线程级 SQLite 连接（worker 线程频繁调 _persist/list_pending，
@@ -84,8 +83,15 @@ def _persist(req: ApprovalRequest, status: str) -> None:
                VALUES (?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
                    status=excluded.status, decided_at=excluded.decided_at""",
-            (req.id, req.task_id, req.subtask_id, req.cmd, status,
-             req.created_at, _now() if status != "pending" else None),
+            (
+                req.id,
+                req.task_id,
+                req.subtask_id,
+                req.cmd,
+                status,
+                req.created_at,
+                _now() if status != "pending" else None,
+            ),
         )
         conn.commit()
     except Exception:  # noqa: BLE001 — 持久化失败可降级为纯内存审批
@@ -121,9 +127,7 @@ def list_pending(task_id: str | None = None) -> list[dict]:
                 (task_id,),
             ).fetchall()
         else:
-            rows = conn.execute(
-                "SELECT * FROM approvals WHERE status='pending' ORDER BY created_at"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM approvals WHERE status='pending' ORDER BY created_at").fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()

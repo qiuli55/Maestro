@@ -3,6 +3,7 @@
 parse -> split -> dispatch(串行/并行) -> collect -> merge -> deliver
 可靠性：单 worker 超时上限、失败重试 1 次、失败隔离、重启恢复（读 SQLite 续跑）。
 """
+
 from __future__ import annotations
 
 import concurrent.futures
@@ -39,8 +40,13 @@ def _execute_subtask(db_path: str, task_id: str, subtask: dict, timeout: int, mo
     tconn = db.init_db(db_path)
     try:
         db.set_subtask_status(tconn, sid, db.RUNNING)
-        db.log_event(tconn, task_id, f"subtask {sid} running", sid,
-                     data={"worker_type": subtask["worker_type"], "desc": subtask["desc"]})
+        db.log_event(
+            tconn,
+            task_id,
+            f"subtask {sid} running",
+            sid,
+            data={"worker_type": subtask["worker_type"], "desc": subtask["desc"]},
+        )
 
         worker = get_worker(subtask["worker_type"])
 
@@ -49,37 +55,36 @@ def _execute_subtask(db_path: str, task_id: str, subtask: dict, timeout: int, mo
         if isinstance(worker, wbase.SubprocessWorker):
             level, reason = guard.scan(subtask["desc"], subtask["worker_type"])
             if level == "block":
-                db.set_subtask_output(
-                    tconn, sid, db.FAILED, error=f"[沙箱拦截] {reason}")
-                db.log_event(tconn, task_id, f"subtask {sid} BLOCKED by guard", sid,
-                             data={"reason": reason})
+                db.set_subtask_output(tconn, sid, db.FAILED, error=f"[沙箱拦截] {reason}")
+                db.log_event(tconn, task_id, f"subtask {sid} BLOCKED by guard", sid, data={"reason": reason})
                 return
             if level == "warn":
-                db.log_event(tconn, task_id, f"subtask {sid} guard warning", sid,
-                             data={"reason": reason})
+                db.log_event(tconn, task_id, f"subtask {sid} guard warning", sid, data={"reason": reason})
 
         # 沙箱防线 2：worker 内部（embedded 的 run_command）走审批流，任务上下文用于审批归属
-        res = worker.spawn(subtask["desc"], str(workdir), timeout,
-                           task_id=task_id, subtask_id=sid)
+        res = worker.spawn(subtask["desc"], str(workdir), timeout, task_id=task_id, subtask_id=sid)
 
         if res.timed_out or res.returncode != 0 or res.error:
             # 重试 1 次
-            db.log_event(tconn, task_id, f"subtask {sid} failed, retrying", sid,
-                         data={"error": _err_msg(res)})
+            db.log_event(tconn, task_id, f"subtask {sid} failed, retrying", sid, data={"error": _err_msg(res)})
             res = worker.spawn(subtask["desc"], str(workdir), timeout)
 
         if res.timed_out or res.returncode != 0 or res.error:
             db.set_subtask_output(tconn, sid, db.FAILED, error=_err_msg(res))
-            db.log_event(tconn, task_id, f"subtask {sid} FAILED", sid,
-                         data={"error": _err_msg(res)})
+            db.log_event(tconn, task_id, f"subtask {sid} FAILED", sid, data={"error": _err_msg(res)})
             return
 
         # 成功：产出落盘 + 登记 result_path
         result_file = workdir / "result.md"
         result_file.write_text(res.output, encoding="utf-8")
         db.set_subtask_output(tconn, sid, db.DONE, output=res.output, result_path=str(result_file))
-        db.log_event(tconn, task_id, f"subtask {sid} done", sid,
-                     data={"result_path": str(result_file), "bytes": len(res.output or "")})
+        db.log_event(
+            tconn,
+            task_id,
+            f"subtask {sid} done",
+            sid,
+            data={"result_path": str(result_file), "bytes": len(res.output or "")},
+        )
     except Exception as e:  # noqa: BLE001 — 隔离一切异常：不拖垮整任务（并行时尤为关键）
         err = f"执行异常: {type(e).__name__}: {str(e)[:300]}"
         try:
@@ -97,8 +102,9 @@ def _err_msg(res) -> str:
     return (res.error or "非零退出").strip()[:500]
 
 
-def _prepare_subtasks(conn, task_id: str, task_prompt: str, scenario: str,
-                      worker_type: str, model: str | None) -> list[dict]:
+def _prepare_subtasks(
+    conn, task_id: str, task_prompt: str, scenario: str, worker_type: str, model: str | None
+) -> list[dict]:
     """拆分并入库子任务（公共步骤），返回带全局 id 的子任务列表。"""
     if scenario == "a":
         subtasks = split.split_requirements(task_prompt, worker_type)
@@ -133,17 +139,24 @@ def prepare_task(
     """
     task_id = task_id or f"task_{uuid.uuid4().hex[:8]}"
     db.create_task(conn, task_id, task_prompt, conv_id=conv_id)
-    db.set_task_params(conn, task_id, scenario=scenario, worker_type=worker_type,
-                       parallel=parallel, no_merge=no_merge)
+    db.set_task_params(conn, task_id, scenario=scenario, worker_type=worker_type, parallel=parallel, no_merge=no_merge)
     subtasks = _prepare_subtasks(conn, task_id, task_prompt, scenario, worker_type, model)
     db.set_task_status(conn, task_id, db.READY)
-    db.log_event(conn, task_id, f"split -> {len(subtasks)} subtasks (ready, awaiting confirm)",
-                 data=[{"id": st["id"], "desc": st["desc"], "worker_type": st["worker_type"]}
-                       for st in subtasks])
+    db.log_event(
+        conn,
+        task_id,
+        f"split -> {len(subtasks)} subtasks (ready, awaiting confirm)",
+        data=[{"id": st["id"], "desc": st["desc"], "worker_type": st["worker_type"]} for st in subtasks],
+    )
     observability.get_logger(__name__).info(
         "task prepared (HITL gate)",
-        extra={"task_id": task_id, "scenario": scenario, "n_subtasks": len(subtasks),
-               "worker_type": worker_type, "parallel": parallel},
+        extra={
+            "task_id": task_id,
+            "scenario": scenario,
+            "n_subtasks": len(subtasks),
+            "worker_type": worker_type,
+            "parallel": parallel,
+        },
     )
     return task_id
 
@@ -198,12 +211,18 @@ def execute_task(
         raise ValueError("子任务列表为空，无法执行")
 
     db.set_task_status(conn, task_id, db.RUNNING)
-    db.log_event(conn, task_id, f"task confirmed, dispatch {len(subtasks)} subtasks",
-                 data=[st["id"] for st in subtasks])
+    db.log_event(
+        conn, task_id, f"task confirmed, dispatch {len(subtasks)} subtasks", data=[st["id"] for st in subtasks]
+    )
     observability.get_logger(__name__).info(
         "task dispatching",
-        extra={"task_id": task_id, "scenario": task["scenario"], "n_subtasks": len(subtasks),
-               "parallel": task["parallel"], "no_merge": task["no_merge"]},
+        extra={
+            "task_id": task_id,
+            "scenario": task["scenario"],
+            "n_subtasks": len(subtasks),
+            "parallel": task["parallel"],
+            "no_merge": task["no_merge"],
+        },
     )
 
     parallel = bool(task["parallel"])
@@ -214,13 +233,16 @@ def execute_task(
     if task["scenario"] == "a":
         for st in subtasks:
             if _is_cancelled(conn, task_id):
-                db.log_event(conn, task_id, "task cancelled mid-serial, stop dispatch",
-                             data={"dispatched": st["id"], "rest": len(subtasks) - subtasks.index(st)})
+                db.log_event(
+                    conn,
+                    task_id,
+                    "task cancelled mid-serial, stop dispatch",
+                    data={"dispatched": st["id"], "rest": len(subtasks) - subtasks.index(st)},
+                )
                 return task_id
             _execute_subtask(db_path, task_id, st, timeout, model)
         db.set_task_status(conn, task_id, db.DONE)
-        db.log_event(conn, task_id, "scenario A serial complete",
-                     data={"subtasks": [st["id"] for st in subtasks]})
+        db.log_event(conn, task_id, "scenario A serial complete", data={"subtasks": [st["id"] for st in subtasks]})
         _push_result_to_conv(conn, task_id)
         return task_id
 
@@ -228,10 +250,7 @@ def execute_task(
         # 上限 8：LLM 拆分可能产生很多子任务，无界线程会瞬时打满 CPU / 文件描述符。
         max_workers = min(len(subtasks), 8) if subtasks else 1
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
-            futures = [
-                ex.submit(_execute_subtask, db_path, task_id, st, timeout, model)
-                for st in subtasks
-            ]
+            futures = [ex.submit(_execute_subtask, db_path, task_id, st, timeout, model) for st in subtasks]
             # 重新抛出子线程内的异常，避免静默失败；
             # as_completed 期间检查取消标志，及时放弃未派发的子任务。
             for f in concurrent.futures.as_completed(futures):
@@ -265,16 +284,21 @@ def execute_task(
     summary_file.write_text(_render_summary(result), encoding="utf-8")
     db.set_task_result(conn, task_id, result.summary, str(summary_file))
     db.set_task_status(conn, task_id, db.DONE)
-    db.log_event(conn, task_id, "task merged",
-                 data={"summary_len": len(result.summary),
-                       "conflicts": len(result.conflicts),
-                       "duplicates": len(result.duplicates),
-                       "coverage_gaps": len(result.coverage_gaps)})
+    db.log_event(
+        conn,
+        task_id,
+        "task merged",
+        data={
+            "summary_len": len(result.summary),
+            "conflicts": len(result.conflicts),
+            "duplicates": len(result.duplicates),
+            "coverage_gaps": len(result.coverage_gaps),
+        },
+    )
     _push_result_to_conv(conn, task_id)
     observability.get_logger(__name__).info(
         "task done",
-        extra={"task_id": task_id, "summary_len": len(result.summary),
-               "n_subtasks": len(subs), "no_merge": no_merge},
+        extra={"task_id": task_id, "summary_len": len(result.summary), "n_subtasks": len(subs), "no_merge": no_merge},
     )
     return task_id
 
@@ -291,8 +315,16 @@ def run_task(
     no_merge: bool = False,
 ) -> str:
     """全自动路径（CLI 用）：prepare + execute 一步到位，无需人工确认。"""
-    task_id = prepare_task(conn, task_prompt, scenario=scenario, worker_type=worker_type,
-                           model=model, parallel=parallel, task_id=task_id, no_merge=no_merge)
+    task_id = prepare_task(
+        conn,
+        task_prompt,
+        scenario=scenario,
+        worker_type=worker_type,
+        model=model,
+        parallel=parallel,
+        task_id=task_id,
+        no_merge=no_merge,
+    )
     return execute_task(conn, task_id, timeout=timeout, model=model)
 
 
@@ -336,8 +368,13 @@ def retry_subtask(conn, subtask_id: str, timeout: int = 600, model: str | None =
         except (ValueError, IndexError):
             attempts = 0
     db.set_subtask_status(conn, subtask_id, db.RETRY)
-    db.log_event(conn, task_id, f"retry subtask {subtask_id}", subtask_id,
-                 data={"prev_status": prev_status, "prev_attempts": attempts})
+    db.log_event(
+        conn,
+        task_id,
+        f"retry subtask {subtask_id}",
+        subtask_id,
+        data={"prev_status": prev_status, "prev_attempts": attempts},
+    )
     _execute_subtask(_db_path(conn), task_id, st, timeout, model)
     # 把 attempt 数写回 error 字段（便于后续事件追溯）。如果这次仍失败，
     # _execute_subtask 会用新错误覆盖，这里再做一次增量：
@@ -347,8 +384,7 @@ def retry_subtask(conn, subtask_id: str, timeout: int = 600, model: str | None =
         attempts += 1
         if not new_err.startswith(f"[attempt {attempts}]"):
             cur_err_prefixed = f"[attempt {attempts}] {new_err}" if new_err else f"[attempt {attempts}]"
-            db.set_subtask_output(conn, subtask_id, db.FAILED, output=cur.get("output") or "",
-                                  error=cur_err_prefixed)
+            db.set_subtask_output(conn, subtask_id, db.FAILED, output=cur.get("output") or "", error=cur_err_prefixed)
     return db.get_subtask(conn, subtask_id)
 
 
@@ -372,5 +408,9 @@ def resume_incomplete(conn, task_id: str, timeout: int = 600, model: str | None 
     has_failed = any(s["status"] == db.FAILED for s in final_subs)
     final_status = db.FAILED if has_failed else db.DONE
     db.set_task_status(conn, task_id, final_status)
-    db.log_event(conn, task_id, f"resume complete -> {final_status}",
-                 data={"n_failed": sum(1 for s in final_subs if s["status"] == db.FAILED)})
+    db.log_event(
+        conn,
+        task_id,
+        f"resume complete -> {final_status}",
+        data={"n_failed": sum(1 for s in final_subs if s["status"] == db.FAILED)},
+    )

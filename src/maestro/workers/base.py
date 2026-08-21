@@ -76,7 +76,7 @@ def register(cls):
     return cls
 
 
-def get_worker(name: str) -> "SubprocessWorker | object":
+def get_worker(name: str) -> SubprocessWorker | object:
     if name not in _REGISTRY:
         raise KeyError(f"未注册的 worker: {name}（可选: {list(_REGISTRY)}）")
     return _REGISTRY[name]()

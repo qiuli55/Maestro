@@ -215,7 +215,7 @@ def _scan_normalized(norm: str) -> tuple[str, str | None]:
     if not tokens:
         return ("ok", None)
 
-    head = tokens[0]
+    tokens[0]
 
     # 0. 恶意工具名（独立检查）
     if _MALICIOUS_TOOLS.search(norm):

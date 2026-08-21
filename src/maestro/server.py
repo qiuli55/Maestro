@@ -6,6 +6,7 @@ WebSocket 每 ~1.2s 轮询 SQLite 把最新状态推给前端。
 
 启动：python -m maestro.server   或   maestro serve
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -17,11 +18,13 @@ from pathlib import Path
 from urllib.parse import quote
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import maestro.workers as _wmod  # 触发 worker 注册
+
 from . import chat, config, db, observability, orchestrator, sandbox, split
 
 load_dotenv()
@@ -41,7 +44,6 @@ app = FastAPI(title="Maestro 编排器", version="0.2")
 # 之前 allow_origins=["*"] 任意脚本（包括外部网站）可调用本服务 API——
 # 本服务虽只监听 127.0.0.1，但浏览器跨域请求仍能从任意源发起。
 # 浏览器内部预览/WorkBuddy 面板均通过 127.0.0.1:8787 访问，无影响。
-from fastapi.middleware.cors import CORSMiddleware
 
 _ALLOWED_ORIGINS = [
     "http://127.0.0.1:8787",
@@ -64,17 +66,32 @@ _POLL_INTERVAL = 1.2  # WS 轮询间隔（秒）
 
 # ---------- 后台任务执行 ----------
 
-def _prepare_job(task_id: str, prompt: str, scenario: str, worker_type: str,
-                 parallel: bool, model: str | None, no_merge: bool = False,
-                 confirm: bool = True, conv_id: str | None = None,
-                 selected_workers: list[str] | None = None):
+
+def _prepare_job(
+    task_id: str,
+    prompt: str,
+    scenario: str,
+    worker_type: str,
+    parallel: bool,
+    model: str | None,
+    no_merge: bool = False,
+    confirm: bool = True,
+    conv_id: str | None = None,
+    selected_workers: list[str] | None = None,
+):
     """后台线程：拆分+入库，停在 READY 等用户确认；confirm=False 则立即执行。"""
     conn = db.init_db()
     selected_workers = selected_workers or ["embedded"]
     try:
         task_id_out = orchestrator.prepare_task(
-            conn, prompt, scenario=scenario, worker_type=worker_type,
-            parallel=parallel, model=model, task_id=task_id, no_merge=no_merge,
+            conn,
+            prompt,
+            scenario=scenario,
+            worker_type=worker_type,
+            parallel=parallel,
+            model=model,
+            task_id=task_id,
+            no_merge=no_merge,
             conv_id=conv_id,
         )
         # 多 agent round-robin 分配
@@ -82,10 +99,7 @@ def _prepare_job(task_id: str, prompt: str, scenario: str, worker_type: str,
             subtasks = db.get_subtasks(conn, task_id_out)
             for i, st in enumerate(subtasks):
                 wt = selected_workers[i % len(selected_workers)]
-                conn.execute(
-                    "UPDATE subtasks SET worker_type=? WHERE id=?",
-                    (wt, st["id"])
-                )
+                conn.execute("UPDATE subtasks SET worker_type=? WHERE id=?", (wt, st["id"]))
             conn.commit()
         if not confirm:
             # 跳过人工闸门：拆分完立即执行（等价旧行为）
@@ -123,6 +137,7 @@ def _resume_job(task_id: str, timeout: int = 600):
 
 
 # ---------- 快照（DB -> dict）----------
+
 
 def _snapshot(task_id: str) -> dict | None:
     conn = db.init_db()
@@ -162,6 +177,7 @@ def _task_row(task: dict, n_subtasks: int, n_failed: int, updated_at: str) -> di
 
 
 # ---------- 健康检查（Kubernetes liveness / readiness 探针用）----------
+
 
 @app.get("/api/healthz", include_in_schema=False)
 def healthz():
@@ -212,6 +228,7 @@ def ready():
 
 # ---------- REST API ----------
 
+
 @app.get("/api/tasks")
 def list_tasks(status: str | None = None, limit: int = 200, offset: int = 0):
     """任务列表：可选按状态过滤 + 分页（默认最近 200 条，与旧行为一致）。"""
@@ -251,12 +268,12 @@ def list_tasks(status: str | None = None, limit: int = 200, offset: int = 0):
 
 # Agent/Worker 列表（前端多选 agent 面板用）
 _WORKER_META = {
-    "embedded":  {"label": "内置编排器", "desc": "本地 LLM，内置文件工具，适合轻量任务"},
-    "opencode":  {"label": "OpenCode",   "desc": "深度编码 agent，适合代码生成/重构"},
-    "octo":      {"label": "Octo",       "desc": "Headless 编码 agent，走 DeepSeek"},
-    "workbuddy": {"label": "WorkBuddy",  "desc": "全能工具型 agent，适合复杂工作流"},
-    "minimax":   {"label": "MiniMax",    "desc": "图片/视频/语音生成，适合创意任务"},
-    "codebuddy": {"label": "CodeBuddy",  "desc": "腾讯云编码 agent（需实名认证）"},
+    "embedded": {"label": "内置编排器", "desc": "本地 LLM，内置文件工具，适合轻量任务"},
+    "opencode": {"label": "OpenCode", "desc": "深度编码 agent，适合代码生成/重构"},
+    "octo": {"label": "Octo", "desc": "Headless 编码 agent，走 DeepSeek"},
+    "workbuddy": {"label": "WorkBuddy", "desc": "全能工具型 agent，适合复杂工作流"},
+    "minimax": {"label": "MiniMax", "desc": "图片/视频/语音生成，适合创意任务"},
+    "codebuddy": {"label": "CodeBuddy", "desc": "腾讯云编码 agent（需实名认证）"},
 }
 
 
@@ -264,6 +281,7 @@ _WORKER_META = {
 def list_agents():
     """返回所有已注册的 agent（含名称/描述/是否可用）。"""
     from . import workers as _wmod
+
     available = _wmod.available_workers()
     return [
         {
@@ -280,18 +298,21 @@ def list_agents():
 def list_keys():
     """Key 库列表（不含实际 key 值，只返回元数据）。"""
     from . import config as _cfg
+
     keys_data = _cfg.load_keys()
     out = []
-    for k in (keys_data.get("keys") or []):
+    for k in keys_data.get("keys") or []:
         env_var = k.get("env_var", "")
         configured = bool(env_var and os.environ.get(env_var))
-        out.append({
-            "id": k.get("id"),
-            "label": k.get("label", env_var),
-            "provider": k.get("provider", ""),
-            "models": k.get("models", []),
-            "configured": configured,
-        })
+        out.append(
+            {
+                "id": k.get("id"),
+                "label": k.get("label", env_var),
+                "provider": k.get("provider", ""),
+                "models": k.get("models", []),
+                "configured": configured,
+            }
+        )
     return out
 
 
@@ -299,6 +320,7 @@ def list_keys():
 def list_models():
     """返回所有已配置的模型（环境变量存在才返回）。"""
     from . import config as _cfg
+
     return _cfg.get_available_models()
 
 
@@ -313,6 +335,7 @@ async def create_task(payload: dict):
     # 模型 → 对应 API key 环境变量（供 LLM 调用时读取）
     if model:
         from . import config as _cfg
+
         key_env = _cfg.resolve_model_to_key(model)
         if key_env:
             os.environ["ACTIVE_API_KEY"] = os.environ.get(key_env, "")
@@ -347,8 +370,27 @@ async def create_task(payload: dict):
 
     # 预先生成 task_id 立即返回；拆分交给后台线程
     task_id = f"task_{os.urandom(4).hex()}"
-    _executor.submit(_prepare_job, task_id, prompt, scenario, worker_type, parallel, model, no_merge, confirm, conv_id, selected_workers)
-    return {"task_id": task_id, "confirm": confirm, "scenario": scenario, "detect_reason": detect_reason, "selected_workers": selected_workers, "model": model}
+    _executor.submit(
+        _prepare_job,
+        task_id,
+        prompt,
+        scenario,
+        worker_type,
+        parallel,
+        model,
+        no_merge,
+        confirm,
+        conv_id,
+        selected_workers,
+    )
+    return {
+        "task_id": task_id,
+        "confirm": confirm,
+        "scenario": scenario,
+        "detect_reason": detect_reason,
+        "selected_workers": selected_workers,
+        "model": model,
+    }
 
 
 @app.put("/api/tasks/{task_id}/subtasks")
@@ -468,6 +510,7 @@ def retry_subtask(task_id: str, subtask_id: str):
 
 # ---------- 沙箱审批 ----------
 
+
 @app.post("/api/tasks/{task_id}/approvals/{approval_id}")
 def approval_decision(task_id: str, approval_id: str, payload: dict):
     """审批命令：POST {"action": "approve" | "reject"}。
@@ -494,6 +537,7 @@ def approval_decision(task_id: str, approval_id: str, payload: dict):
 
 
 # ---------- 数字人闲聊 ----------
+
 
 @app.get("/api/conversations")
 def conversation_list(kind: str | None = None):
@@ -715,7 +759,7 @@ async def ws_messages(websocket: WebSocket):
         _active_ws_connections.append(websocket)
     try:
         while True:
-            data = await websocket.receive_text()
+            await websocket.receive_text()
             # 客户端可以发送 {"action": "subscribe", "conv_id": "xxx"} 来订阅特定会话
             # 目前不需要客户端消息，只接收即可
     except WebSocketDisconnect:
@@ -772,6 +816,7 @@ async def ws_task(websocket: WebSocket, task_id: str):
 
 # ---------- 壁纸预览 ----------
 
+
 @app.get("/wallpaper")
 def wallpaper():
     fp = WALLPAPER_DIR / "index.html"
@@ -785,8 +830,7 @@ def wallpaper():
 # 注意：@app.get("/wallpaper") 精确路由在前，/wallpaper 仍返回 index.html；
 # /wallpaper/xxx 走这个挂载。
 if WALLPAPER_DIR.exists():
-    app.mount("/wallpaper", StaticFiles(directory=str(WALLPAPER_DIR), html=True),
-              name="wallpaper_static")
+    app.mount("/wallpaper", StaticFiles(directory=str(WALLPAPER_DIR), html=True), name="wallpaper_static")
 
 
 # ---------- 静态前端（最后挂载，避免拦截 /api 与 /ws）----------

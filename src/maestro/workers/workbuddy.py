@@ -9,6 +9,7 @@ workdir/workbuddy_task_prompt.md 作为备注，供 WorkBuddy 预定义任务参
 1. WorkBuddy 设置 → 高级 → 启用本地 CLI 调用（沙箱无法替你勾选）
 2. 在 WorkBuddy 里建好自动化任务模板，并把其 id 配到 WORKBUDDY_TASK_ID
 """
+
 import os
 import pathlib
 
@@ -23,9 +24,7 @@ class WorkBuddyWorker(SubprocessWorker):
     def build_command(self, prompt: str, workdir: str) -> list[str]:
         # 备注：把子任务 prompt 落盘，供 WorkBuddy 预定义任务参考
         try:
-            pathlib.Path(workdir).joinpath("workbuddy_task_prompt.md").write_text(
-                prompt, encoding="utf-8"
-            )
+            pathlib.Path(workdir).joinpath("workbuddy_task_prompt.md").write_text(prompt, encoding="utf-8")
         except OSError:
             pass
 
@@ -33,7 +32,8 @@ class WorkBuddyWorker(SubprocessWorker):
         if not tid:
             # 配置缺失：返回会失败（exit 2）的命令，让子任务 FAILED 而非崩溃整个任务
             return [
-                "cmd", "/c",
+                "cmd",
+                "/c",
                 "echo WORKBUDDY_TASK_ID 未配置：WorkBuddy 桌面 CLI 只能 run-task --id "
                 "触发预定义任务，请在 env 或 subtask 配置中指定 & exit 2",
             ]

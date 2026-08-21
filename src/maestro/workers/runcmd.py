@@ -7,6 +7,7 @@
 - 超时 kill、cwd 限定在 workdir 内
 - **绝不**使用 shell=True：shell 解析下 LLM 可拼接 `&calc`、`^`、`%` 绕过黑名单。
 """
+
 from __future__ import annotations
 
 import os
@@ -18,37 +19,121 @@ from .. import sandbox
 
 # 允许的命令（只读/查看类）。不含任何会修改状态、删除、下载执行的命令。
 _ALLOWED_COMMANDS = {
-    "git", "dir", "ls", "where", "type", "echo", "tasklist", "systeminfo",
-    "findstr", "tree", "ver", "hostname", "whoami", "path", "set",
+    "git",
+    "dir",
+    "ls",
+    "where",
+    "type",
+    "echo",
+    "tasklist",
+    "systeminfo",
+    "findstr",
+    "tree",
+    "ver",
+    "hostname",
+    "whoami",
+    "path",
+    "set",
 }
 
 # 白名单内 git 允许的子命令（只读）。git clone/push/pull 等会改状态，归审批。
-_ALLOWED_GIT_SUB = {"status", "log", "diff", "show", "branch", "remote",
-                    "rev-parse", "tag", "shortlog", "blame", "ls-files"}
+_ALLOWED_GIT_SUB = {
+    "status",
+    "log",
+    "diff",
+    "show",
+    "branch",
+    "remote",
+    "rev-parse",
+    "tag",
+    "shortlog",
+    "blame",
+    "ls-files",
+}
 
 # 审批命令（写/改/删/安装/网络/执行脚本）。命令名精确匹配（去 .exe / ./ 前缀）。
 # 命中即进审批队列，用户批准才执行；其余未知命令一律拒绝（默认受限）。
 _APPROVAL_COMMANDS = {
-    "del", "erase", "rmdir", "rd", "rm", "copy", "xcopy", "move", "ren",
-    "rename", "mkdir", "md", "attrib", "icacls", "robocopy", "replace",
-    "tar", "pip", "pip3", "npm", "pnpm", "yarn", "uv", "python", "node",
-    "net", "sc", "curl", "wget", "certutil",
+    "del",
+    "erase",
+    "rmdir",
+    "rd",
+    "rm",
+    "copy",
+    "xcopy",
+    "move",
+    "ren",
+    "rename",
+    "mkdir",
+    "md",
+    "attrib",
+    "icacls",
+    "robocopy",
+    "replace",
+    "tar",
+    "pip",
+    "pip3",
+    "npm",
+    "pnpm",
+    "yarn",
+    "uv",
+    "python",
+    "node",
+    "net",
+    "sc",
+    "curl",
+    "wget",
+    "certutil",
 }
 
 # git 写操作子命令（审批）。git 整体在白名单里做子命令分级，见 validate()。
 _APPROVAL_GIT_SUB = {
-    "add", "commit", "push", "pull", "clone", "merge", "rebase", "reset",
-    "checkout", "switch", "restore", "clean", "stash", "rm", "mv", "config",
+    "add",
+    "commit",
+    "push",
+    "pull",
+    "clone",
+    "merge",
+    "rebase",
+    "reset",
+    "checkout",
+    "switch",
+    "restore",
+    "clean",
+    "stash",
+    "rm",
+    "mv",
+    "config",
 }
 
 # 灾难性/逃逸标记：命中任一即直接拒绝（无论命令是否在白名单/审批名单）。
 # 子串匹配但尽量带空格精确化，避免误伤（如 "reg" 命中 "regedit"、"start" 命中 "restart"）。
 _BLOCKED_TOKENS = (
-    "format ", "shutdown", "taskkill", "diskpart", "bcdedit", "schtasks",
-    "wmic", "msiexec", "powershell", "cmd /c",
-    "reg add", "reg delete", "reg import", "reg save",
-    "net user", "net localgroup",
-    ">", ">>", "|", "&", "&&", "||", ";", "`", "$(",
+    "format ",
+    "shutdown",
+    "taskkill",
+    "diskpart",
+    "bcdedit",
+    "schtasks",
+    "wmic",
+    "msiexec",
+    "powershell",
+    "cmd /c",
+    "reg add",
+    "reg delete",
+    "reg import",
+    "reg save",
+    "net user",
+    "net localgroup",
+    ">",
+    ">>",
+    "|",
+    "&",
+    "&&",
+    "||",
+    ";",
+    "`",
+    "$(",
 )
 
 # 删除类命令指向盘符根目录（C:\、D:/ 后跟分隔符/通配/结尾）——直接拒绝，不给审批机会。
@@ -120,6 +205,7 @@ def _split_cmd(cmd: str) -> list[str]:
     shlex 不支持 `cmd /c x`，因此对 cmd.exe 单独走 _split_cmd_exe 切。
     """
     import shlex
+
     s = cmd.strip()
     if not s:
         return []
@@ -143,8 +229,7 @@ def _ensure_cwd(workdir: str) -> str:
     return wd
 
 
-def run(cmd: str, workdir: str, task_id: str | None = None,
-        subtask_id: str | None = None) -> str:
+def run(cmd: str, workdir: str, task_id: str | None = None, subtask_id: str | None = None) -> str:
     """执行命令（三档分级），返回输出。违规/拒绝/超时/异常返回带标记文本（不抛异常）。
 
     task_id 由编排器传入（embedded worker 的 tool_executor 上下文）；
@@ -171,13 +256,15 @@ def run(cmd: str, workdir: str, task_id: str | None = None,
     # Windows：补全 .exe 后缀便于 PATH 查找（系统 PATH 下 dir.exe / git.exe / etc.）。
     # shlex 已经按原样保留 .exe 不变，未带的后缀靠 PATH 解析，subprocess.run 不依赖后缀。
     # CREATE_NO_WINDOW：避免在用户桌面弹黑色 cmd 窗口（仅 Windows 生效）。
-    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    creationflags = (
+        subprocess.CREATE_NO_WINDOW if sys.platform == "win32" and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    )
 
     cwd = _ensure_cwd(workdir)
 
     try:
         proc = subprocess.run(
-            argv,                # 列表形式 → 绝不经过 shell 解析
+            argv,  # 列表形式 → 绝不经过 shell 解析
             shell=False,
             cwd=cwd,
             capture_output=True,

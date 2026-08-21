@@ -3,6 +3,7 @@
 技术方案 §133：内嵌 worker 只做「LLM 产出 + 简单文件操作（读文件）」，
 不执行命令、不改文件、不跑测试。
 """
+
 from __future__ import annotations
 
 import os
@@ -12,15 +13,17 @@ from pathlib import Path
 MAX_READ_CHARS = 20000
 
 # 拒绝读取的敏感路径/文件（防泄露密钥、配置）
-_DENY_NAMES = {".env", ".env.local", ".env.production", "id_rsa", "id_ed25519",
-               "credentials", "secrets", "secret"}
+_DENY_NAMES = {".env", ".env.local", ".env.production", "id_rsa", "id_ed25519", "credentials", "secrets", "secret"}
 _DENY_PARTS = {".git", "__pycache__", "node_modules"}
 
 # Windows 设备文件名（保留名）：构造 CON / NUL / COM1 等路径会让 Python 解析成设备
 # 而非普通文件——LLM 如果能指定这些名字就能触发设备 I/O。
 # 拒绝对这些名字的读取。
 _WINDOWS_RESERVED = {
-    "con", "prn", "aux", "nul",
+    "con",
+    "prn",
+    "aux",
+    "nul",
     *(f"com{i}" for i in range(1, 10)),
     *(f"lpt{i}" for i in range(1, 10)),
 }

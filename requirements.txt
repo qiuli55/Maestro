@@ -1,7 +1,8 @@
+# 运行时依赖（生产镜像用）
+# 与 requirements-dev.txt 互补；Dockerfile 装这个。
 openai>=1.40
 pyyaml>=6.0
 python-dotenv>=1.0
 fastapi>=0.115
 uvicorn>=0.34
 websockets>=17.0
-pytest>=8.0
