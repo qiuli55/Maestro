@@ -341,9 +341,13 @@ def set_subtask_output(
 
 
 def log_event(conn: sqlite3.Connection, task_id: str, event: str,
-              subtask_id: str | None = None, data=None):
+              subtask_id: str | None = None, data=None, *, _commit: bool = True):
     """记录事件。data 为可 JSON 序列化的任意对象（dict/list/str/int…），
-    存入前序列化为 JSON 字符串；序列化失败则退化为 str(data)。"""
+    存入前序列化为 JSON 字符串；序列化失败则退化为 str(data)。
+
+    _commit=False：跳过 commit（用于批量调用场景，由调用方统一提交）。
+    默认 _commit=True 保持向后兼容（旧测试不修改）。
+    """
     data_json = None
     if data is not None:
         try:
@@ -353,6 +357,33 @@ def log_event(conn: sqlite3.Connection, task_id: str, event: str,
     conn.execute(
         "INSERT INTO task_events (task_id, subtask_id, ts, event, data) VALUES (?,?,?,?,?)",
         (task_id, subtask_id, _now(), event, data_json),
+    )
+    if _commit:
+        conn.commit()
+
+
+def log_events_batch(conn: sqlite3.Connection, events: list[dict]) -> None:
+    """批量记录事件（一次 commit，多次 insert）。
+
+    events: [{"task_id": "...", "subtask_id": "...", "event": "...", "data": ...}, ...]
+    所有事件共享同一时间戳（批量语义：同一时刻发生）。
+    """
+    if not events:
+        return
+    now = _now()
+    rows = []
+    for e in events:
+        data = e.get("data")
+        data_json = None
+        if data is not None:
+            try:
+                data_json = json.dumps(data, ensure_ascii=False)
+            except (TypeError, ValueError):
+                data_json = str(data)
+        rows.append((e["task_id"], e.get("subtask_id"), now, e["event"], data_json))
+    conn.executemany(
+        "INSERT INTO task_events (task_id, subtask_id, ts, event, data) VALUES (?,?,?,?,?)",
+        rows,
     )
     conn.commit()
 

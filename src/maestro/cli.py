@@ -9,6 +9,7 @@ maestro reset  <task_id>
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -61,6 +62,9 @@ def main(argv: list[str] | None = None):
 
     retry_p = sub.add_parser("retry", help="重派失败子任务")
     retry_p.add_argument("subtask_id")
+    retry_p.add_argument("--timeout", type=int,
+                         default=int(os.environ.get("WORKER_TIMEOUT", "600")),
+                         help="超时（秒，默认从 WORKER_TIMEOUT 环境变量读）")
 
     reset_p = sub.add_parser("reset", help="清空任务（开发期）")
     reset_p.add_argument("task_id")
@@ -96,7 +100,7 @@ def main(argv: list[str] | None = None):
         return 0
 
     if args.cmd == "retry":
-        st = orchestrator.retry_subtask(conn, args.subtask_id, timeout=args.timeout if hasattr(args, "timeout") else 600)
+        st = orchestrator.retry_subtask(conn, args.subtask_id, timeout=args.timeout)
         print(f"重派完成：{st['id']} -> {st['status']}")
         return 0
 

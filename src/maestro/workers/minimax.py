@@ -64,19 +64,39 @@ class MiniMaxWorker:
         if not MMX_API_KEY:
             return WorkerResult("", "未设置 MMX_API_KEY 环境变量", False, 1)
 
-        # 解析 prompt 判断任务类型
-        prompt_lower = prompt.lower()
-        
-        if "图片" in prompt or "image" in prompt_lower or "生成图" in prompt:
-            return self._generate_image(prompt)
-        elif "视频" in prompt or "video" in prompt_lower or "生成视频" in prompt:
-            return self._generate_video(prompt)
-        elif "语音" in prompt or "speech" in prompt_lower or "配音" in prompt:
-            return self._generate_speech(prompt)
-        elif "音乐" in prompt or "music" in prompt_lower or "生成音乐" in prompt:
-            return self._generate_music(prompt)
-        else:
-            return self._text_chat(prompt)
+        # 解析 prompt 判断任务类型。
+        # 用显式前缀（mmx:img:/vid:/spk:/mus:/txt）避免子串误判
+        # （"我喜欢图片" 会被旧的子串匹配误判为 image generation）。
+        # 同时兼容直接的子串匹配（向后兼容）。
+        p = prompt.strip()
+        low = p.lower()
+
+        # 显式前缀优先
+        if low.startswith(("mmx:img ", "mmx:image ", "[img] ", "[image] ")):
+            return self._generate_image(p)
+        if low.startswith(("mmx:vid ", "mmx:video ", "[vid] ", "[video] ")):
+            return self._generate_video(p)
+        if low.startswith(("mmx:spk ", "mmx:speech ", "[spk] ", "[speech] ")):
+            return self._generate_speech(p)
+        if low.startswith(("mmx:mus ", "mmx:music ", "[mus] ", "[music] ")):
+            return self._generate_music(p)
+        if low.startswith(("mmx:txt ", "mmx:text ", "[txt] ", "[text] ")):
+            return self._text_chat(p)
+
+        # 短指令（< 60 字符）有明确的"生成"动词+类型词 → 走对应生成
+        # 长 prompt（含详细描述）一律走 text_chat，由 LLM 自己处理
+        if len(p) <= 60:
+            if p.startswith(("生成图", "画一", "画个")) or low.startswith(("generate image", "draw ", "create image")):
+                return self._generate_image(p)
+            if p.startswith(("生成视频", "做个视频")) or low.startswith(("generate video", "make video")):
+                return self._generate_video(p)
+            if p.startswith(("生成语音", "配音", "朗读")) or low.startswith(("generate speech", "tts ")):
+                return self._generate_speech(p)
+            if p.startswith(("生成音乐", "作曲")) or low.startswith(("generate music", "compose ")):
+                return self._generate_music(p)
+
+        # 兜底：长 prompt 或未匹配 → text_chat
+        return self._text_chat(p)
 
     def _text_chat(self, prompt: str) -> WorkerResult:
         stdout, stderr, rc = _run_mmx(["text", "chat", "--message", prompt])

@@ -142,10 +142,15 @@ def complete_with_tools(
                 "tool_call_id": tc.id,
                 "content": result,
             })
-    # 达到轮数上限仍未给出最终文本：返回最后一次工具调用的结果兜底
-    for m in reversed(msgs):
-        if isinstance(m, dict) and m.get("role") == "tool" and m.get("content"):
-            return m["content"]
+    # 达到轮数上限仍未给出最终文本：日志警告 + 返回空串。
+    # 旧实现是返回最后一次 tool result（语义错误：tool 输出不是 assistant 回答），
+    # 现在改返回空串，让调用方走错误"处理而非"得到半成品答案"路径。
+    import warnings
+    warnings.warn(
+        f"LLM 在 {max_rounds} 轮工具调用后仍没给最终文本（msgs={len(msgs)}）",
+        RuntimeWarning,
+        stacklevel=2,
+    )
     return ""
 
 

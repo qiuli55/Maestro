@@ -16,14 +16,28 @@ _DENY_NAMES = {".env", ".env.local", ".env.production", "id_rsa", "id_ed25519",
                "credentials", "secrets", "secret"}
 _DENY_PARTS = {".git", "__pycache__", "node_modules"}
 
+# Windows 设备文件名（保留名）：构造 CON / NUL / COM1 等路径会让 Python 解析成设备
+# 而非普通文件——LLM 如果能指定这些名字就能触发设备 I/O。
+# 拒绝对这些名字的读取。
+_WINDOWS_RESERVED = {
+    "con", "prn", "aux", "nul",
+    *(f"com{i}" for i in range(1, 10)),
+    *(f"lpt{i}" for i in range(1, 10)),
+}
+
 
 def _is_sensitive(path: Path) -> bool:
     """命中敏感文件名 / 敏感目录段则拒绝。"""
-    if path.name in _DENY_NAMES:
+    if path.name.lower() in {n.lower() for n in _DENY_NAMES}:
+        return True
+    # Windows 设备文件名（保留名）
+    if path.name.lower() in _WINDOWS_RESERVED:
         return True
     # 任意一层路径段命中敏感目录（含大小写不敏感，Windows）
     for part in path.parts:
         if part.lower() in _DENY_PARTS:
+            return True
+        if part.lower() in _WINDOWS_RESERVED:
             return True
     return False
 
@@ -33,6 +47,7 @@ def safe_read(rel_path: str, root: str | Path) -> str:
 
     - realpath 校验：解析符号链接/.. 后必须仍在 root 内（防路径逃逸）
     - 拒绝敏感文件（.env/密钥/.git）
+    - 拒绝 Windows 设备文件名（CON / NUL / COM1 等）
     - 大小上限截断
     返回文件内容；违规/不存在/非文件则返回带标记的错误文本（不抛异常，
     由 LLM 决定如何处理），绝不泄露绝对路径细节。
@@ -50,7 +65,7 @@ def safe_read(rel_path: str, root: str | Path) -> str:
         return "[read_file 拒绝] 目标不是文件。"
 
     if _is_sensitive(candidate):
-        return "[read_file 拒绝] 该文件是敏感文件（如密钥/配置），禁止读取。"
+        return "[read_file 拒绝] 该文件是敏感文件（如密钥/配置/Windows 设备名），禁止读取。"
 
     try:
         text = candidate.read_text(encoding="utf-8", errors="replace")
