@@ -1,0 +1,85 @@
+# Maestro 一键启动（生产推荐 docker compose up -d）
+#
+# 用法：
+#   1. cp .env.example .env  # 填真实 key
+#   2. docker compose up -d  # 后台启动
+#   3. 浏览器打开 http://localhost:8787
+#
+# 数据卷：
+#   - maestro-data：SQLite + 任务产出
+#   - maestro-outputs：子任务 result.md / summary.md
+#
+# 注意：.env 不进镜像（被 .dockerignore 排除），运行时 env_file 注入。
+
+services:
+  maestro:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: maestro:latest
+    container_name: maestro-server
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    env_file:
+      - .env
+    environment:
+      # 容器内固定值（可被 .env 覆盖）
+      MAESTRO_DB: /app/data/maestro.db
+      MAESTRO_OUTPUTS: /app/outputs
+      MAESTRO_HOST: 0.0.0.0
+      MAESTRO_PORT: 8787
+      LOG_LEVEL: "INFO"
+      LOG_FORMAT: "json"  # 容器用 json 便于收集
+      PYTHONUNBUFFERED: 1
+    volumes:
+      # SQLite + 运行时数据（避免容器重启丢失）
+      - maestro-data:/app/data
+      # 子任务落盘结果
+      - maestro-outputs:/app/outputs
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; \
+              sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8787/api/healthz').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        # 容器 stdout 自动接 docker logs / docker compose logs
+    restart_policy:
+      condition: on-failure
+      delay: 5s
+      max_attempts: 5
+      window: 30s
+
+volumes:
+  maestro-data:
+    name: maestro-data
+  maestro-outputs:
+    name: maestro-outputs
+
+# ============================================================================
+# 未来扩展（注释，不启用）
+# ============================================================================
+#
+#   redis:
+#     image: redis:7-alpine
+#     container_name: maestro-redis
+#     restart: unless-stopped
+#     ports: ["6379:6379"]
+#     volumes: [redis-data:/data]
+#     command: redis-server --appendonly yes
+#
+#   prometheus:
+#     image: prom/prometheus:latest
+#     container_name: maestro-prometheus
+#     ports: ["9090:9090"]
+#     volumes: [./configs/prometheus.yml:/etc/prometheus/prometheus.yml]
+#
+# volumes:
+#   redis-data:

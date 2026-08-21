@@ -10,7 +10,7 @@ import os
 import uuid
 from pathlib import Path
 
-from . import db, guard, merge, split
+from . import db, guard, merge, observability, split
 from .workers import base as wbase
 from .workers.base import get_worker
 
@@ -140,6 +140,11 @@ def prepare_task(
     db.log_event(conn, task_id, f"split -> {len(subtasks)} subtasks (ready, awaiting confirm)",
                  data=[{"id": st["id"], "desc": st["desc"], "worker_type": st["worker_type"]}
                        for st in subtasks])
+    observability.get_logger(__name__).info(
+        "task prepared (HITL gate)",
+        extra={"task_id": task_id, "scenario": scenario, "n_subtasks": len(subtasks),
+               "worker_type": worker_type, "parallel": parallel},
+    )
     return task_id
 
 
@@ -195,6 +200,11 @@ def execute_task(
     db.set_task_status(conn, task_id, db.RUNNING)
     db.log_event(conn, task_id, f"task confirmed, dispatch {len(subtasks)} subtasks",
                  data=[st["id"] for st in subtasks])
+    observability.get_logger(__name__).info(
+        "task dispatching",
+        extra={"task_id": task_id, "scenario": task["scenario"], "n_subtasks": len(subtasks),
+               "parallel": task["parallel"], "no_merge": task["no_merge"]},
+    )
 
     parallel = bool(task["parallel"])
     no_merge = bool(task["no_merge"])
@@ -261,6 +271,11 @@ def execute_task(
                        "duplicates": len(result.duplicates),
                        "coverage_gaps": len(result.coverage_gaps)})
     _push_result_to_conv(conn, task_id)
+    observability.get_logger(__name__).info(
+        "task done",
+        extra={"task_id": task_id, "summary_len": len(result.summary),
+               "n_subtasks": len(subs), "no_merge": no_merge},
+    )
     return task_id
 
 

@@ -70,6 +70,25 @@ INFO:     Uvicorn running on http://127.0.0.1:8787 (Press CTRL+C to quit)
 
 浏览器打开 **http://127.0.0.1:8787**，看到芙莉莲壁纸 + 底部输入框。
 
+### 3.1 Docker 启动（生产推荐）
+
+```bash
+# 配 .env 后一键启动
+docker compose up -d
+
+# 看日志
+docker compose logs -f maestro
+
+# 健康检查
+curl http://localhost:8787/api/healthz   # → {"status": "ok"}
+curl http://localhost:8787/api/ready      # → 完整 readiness 检查
+
+# 停止
+docker compose down
+```
+
+数据持久化到 named volumes（`maestro-data` / `maestro-outputs`），容器重建不丢。
+
 ---
 
 ## 4. 第一个任务（30 秒）

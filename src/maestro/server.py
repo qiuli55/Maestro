@@ -22,14 +22,14 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import maestro.workers as _wmod  # 触发 worker 注册
-from . import chat, config, db, orchestrator, sandbox, split
+from . import chat, config, db, observability, orchestrator, sandbox, split
 
 load_dotenv()
 config.apply_worker_bins()  # 把 workers.json 的 bin 路径灌进环境变量（不覆盖已设的）
+observability.setup_logging()  # 结构化日志（受 LOG_LEVEL / LOG_FORMAT 控制）
 
-# 之前曾硬编码 E:\tools\opencode / E:\tools\octo 注入 PATH；这些目录已在
-# workers.json 配 bin 绝对路径，subprocess 通过 env={..., PATH: ...} 透传，
-# 不必再改全局 PATH。删除此段以避免跨机/跨人部署失败。
+log = observability.get_logger(__name__)
+log.info("maestro starting", extra={"version": "0.2", "workers": _wmod.available_workers()})
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = ROOT / "web"
@@ -161,6 +161,55 @@ def _task_row(task: dict, n_subtasks: int, n_failed: int, updated_at: str) -> di
     }
 
 
+# ---------- 健康检查（Kubernetes liveness / readiness 探针用）----------
+
+@app.get("/api/healthz", include_in_schema=False)
+def healthz():
+    """轻量 liveness 探针：进程是否在响应（不查依赖）。
+
+    用于 K8s livenessProbe / Docker HEALTHCHECK / 负载均衡器探活。
+    """
+    return {"status": "ok"}
+
+
+@app.get("/api/ready")
+def ready():
+    """完整 readiness 探针：检查 SQLite 可用 + LLM provider 配置。
+
+    Returns:
+        200 + {"status": "ok", "checks": {...}} — 全通过
+        503 + {"status": "degraded", "checks": {...}} — 关键依赖异常
+    """
+    checks: dict = {}
+    db_ok = True
+    try:
+        conn = db.init_db()
+        try:
+            conn.execute("SELECT 1").fetchone()
+        finally:
+            conn.close()
+    except Exception as e:  # noqa: BLE001
+        checks["db_error"] = str(e)[:200]
+        db_ok = False
+    checks["db"] = "ok" if db_ok else "fail"
+
+    # LLM provider 配置检查（不真发请求，只看 key 是否存在）
+    providers = config.load_providers()
+    key_present = bool(os.environ.get("DEEPSEEK_API_KEY")) or bool(providers)
+    checks["llm"] = "ok" if key_present else "no_key"
+
+    # Worker 注册检查
+    workers = _wmod.available_workers()
+    checks["workers"] = {"count": len(workers), "names": workers}
+
+    all_ok = db_ok and key_present
+    return {
+        "status": "ok" if all_ok else "degraded",
+        "checks": checks,
+        "version": "0.2",
+    }
+
+
 # ---------- REST API ----------
 
 @app.get("/api/tasks")
@@ -175,7 +224,6 @@ def list_tasks(status: str | None = None, limit: int = 200, offset: int = 0):
 
     conn = db.init_db()
     try:
-        # 单次 GROUP BY JOIN 一次查完（之前循环 N+1，200 任务 = 400 次 DB 往返）。
         # LEFT JOIN 保证没子任务的 task 也在结果里（COUNT 为 0）。
         base = (
             "SELECT t.id, t.user_prompt, t.status, t.created_at, t.updated_at, "

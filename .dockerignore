@@ -1,0 +1,59 @@
+# 镜像构建时排除（加速 + 减少体积 + 防密钥泄露）
+.git/
+.gitignore
+.gitattributes
+
+# 敏感文件（绝对不能进镜像）
+.env
+.env.*
+*.key
+*.pem
+
+# 测试与开发产物
+tests/
+docs/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.pyright_cache/
+
+# 运行时产物（每次启动会重新生成）
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.log
+
+# 大型资源（按需挂卷，不进镜像）
+wallpaper/models/
+wallpaper/vendor/
+web/pet_rig/
+web/pet_q/
+web/pet_q_v2/
+web/pet_poses/
+ocwtest/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Docker 自身
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# 文档图片占位
+docs/img/
+
+# 项目记忆（不是产品代码）
+.workbuddy/
