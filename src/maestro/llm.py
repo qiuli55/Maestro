@@ -2,17 +2,20 @@
 
 安全：API Key 仅从环境变量读取，绝不写入代码或日志。
 
+弹性：所有 LLM 调用走 resilience.with_resilience 装饰器（指数退避 + 熔断 + QPS 限流）。
+- 区分 transient（429/5xx/网络错 重试）vs permanent（401/400 不重试）
+- 连续 5 次失败熔断 60s，避免在 DeepSeek 不可用时浪费 token
+- 全局 QPS=10 / burst=20，避免触发上游限流
+
 多 provider：model 参数支持 "provider:model" 语法（如 "kimi:kimi-k2.6"），
 不带前缀走默认 DeepSeek。provider 定义见 configs/providers.json。
 """
-
 import json
 import os
-import time
 
 from openai import OpenAI
 
-from . import config
+from . import config, resilience
 
 _DEFAULT_PROVIDER = "deepseek"
 
@@ -60,39 +63,57 @@ def get_client(provider: str = _DEFAULT_PROVIDER) -> tuple[OpenAI, str]:
     return OpenAI(api_key=key, base_url=base_url), default_model
 
 
+def _raw_chat(client, model_name, messages, temperature=0.2, tools=None):
+    """裸调用 openai SDK（给 resilience 装饰器包）。"""
+    kwargs = {"model": model_name, "messages": messages, "temperature": temperature}
+    if tools:
+        kwargs["tools"] = tools
+    return client.chat.completions.create(**kwargs)
+
+
+@resilience.with_resilience(
+    retry=resilience.RetryPolicy(max_retries=3, base_delay=1.0, max_delay=30.0, jitter=1.0),
+    breaker=resilience.shared_breaker(),
+    limiter=resilience.shared_limiter(),
+)
+def _chat_with_resilience(client, model_name, messages, temperature, tools):
+    return _raw_chat(client, model_name, messages, temperature=temperature, tools=tools)
+
+
 def complete(
     system: str,
     user: str,
     model: str | None = None,
     temperature: float = 0.2,
-    max_retries: int = 1,
+    max_retries: int = 3,
 ) -> str:
-    """一次 LLM 调用，失败自动重试 max_retries 次（默认 1 次）。"""
+    """一次 LLM 调用。失败自动重试 max_retries 次（默认 3），享受熔断 + QPS 限流。"""
     provider, model_name = _resolve(model)
     client, default_model = get_client(provider)
     model_name = model_name or default_model
-    last_err: Exception | None = None
-    for attempt in range(max_retries + 1):
-        try:
-            resp = client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                temperature=temperature,
-            )
-            return resp.choices[0].message.content or ""
-        except Exception as e:  # noqa: BLE001 — 网络/限流统一重试
-            last_err = e
-            if attempt < max_retries:
-                # 指数退避 + jitter：1s, 2s, 4s, 8s...（封顶 30s），
-                # + 0~1s 随机抖动避免雪崩。
-                import random
 
-                backoff = min(30, 2**attempt) + random.random()
-                time.sleep(backoff)
-    raise RuntimeError(f"LLM 调用失败（已重试 {max_retries} 次）: {last_err}")
+    # 临时装饰器：让 max_retries 走参数
+    @resilience.with_resilience(
+        retry=resilience.RetryPolicy(max_retries=max_retries, base_delay=1.0, max_delay=30.0, jitter=1.0),
+        breaker=resilience.shared_breaker(),
+        limiter=resilience.shared_limiter(),
+    )
+    def _call():
+        return _raw_chat(
+            client, model_name,
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=temperature,
+        )
+
+    try:
+        resp = _call()
+    except resilience.CircuitOpenError as e:
+        # 熔断器打开时 fail-fast 返回空串（语义错误，让调用方走错误处理路径）
+        import warnings
+
+        warnings.warn(f"LLM 熔断器打开: {e}", RuntimeWarning, stacklevel=2)
+        return ""
+    return resp.choices[0].message.content or ""
 
 
 def complete_json(system: str, user: str, model: str | None = None) -> dict | list:
@@ -108,6 +129,7 @@ def complete_with_tools(
     tool_executor,
     model: str | None = None,
     max_rounds: int = 3,
+    max_retries: int = 3,
 ) -> str:
     """带工具的多轮往返（有限轮，非完整 agent 循环）。
 
@@ -115,6 +137,7 @@ def complete_with_tools(
     tool_executor: callable(name, args: dict) -> str，执行工具并返回结果文本。
     流程：调 LLM -> 若返回 tool_calls 则执行 -> 把结果作为 tool 消息喂回 -> 再调 LLM。
     最多 max_rounds 轮工具调用（默认 3，有限轮防失控；技术方案 §133 不内置完整 agent 循环）。
+    每次 LLM 调用享受与 complete() 相同的 retry / 熔断 / 限流。
     """
     provider, model_name = _resolve(model)
     client, default_model = get_client(provider)
@@ -123,13 +146,31 @@ def complete_with_tools(
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
+
+    @resilience.with_resilience(
+        retry=resilience.RetryPolicy(max_retries=max_retries),
+        breaker=resilience.shared_breaker(),
+        limiter=resilience.shared_limiter(),
+    )
+    def _chat():
+        return _raw_chat(client, model_name, msgs, temperature=0.2, tools=tools)
+
     for _ in range(max_rounds):
-        resp = client.chat.completions.create(model=model_name, messages=msgs, tools=tools, temperature=0.2)
+        try:
+            resp = _chat()
+        except resilience.CircuitOpenError:
+            import warnings
+
+            warnings.warn(
+                f"LLM 熔断器打开，跳过本轮工具调用（msgs={len(msgs)}）",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return ""
         msg = resp.choices[0].message
         if not getattr(msg, "tool_calls", None):
             return msg.content or ""
 
-        # 执行工具并把结果喂回
         msgs.append(msg)  # 模型带 tool_calls 的 assistant 消息
         for tc in msg.tool_calls:
             try:
@@ -144,9 +185,8 @@ def complete_with_tools(
                     "content": result,
                 }
             )
+
     # 达到轮数上限仍未给出最终文本：日志警告 + 返回空串。
-    # 旧实现是返回最后一次 tool result（语义错误：tool 输出不是 assistant 回答），
-    # 现在改返回空串，让调用方走错误"处理而非"得到半成品答案"路径。
     import warnings
 
     warnings.warn(
