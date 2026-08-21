@@ -51,6 +51,29 @@ class BoomWorker(SubprocessWorker):
 # 触发真实 worker 模块注册（opencode/octo/embedded）
 from maestro.workers import opencode, octo, embedded  # noqa: F401,E402
 
+import os
+import shutil
+from maestro.workers import base as wbase_mod
+
+
+@pytest.fixture(autouse=True)
+def _fake_workers_have_bin():
+    """给 conftest 里的 FakeWorker/FlakyWorker/BoomWorker 设个真实存在的 bin。
+
+    这些 worker 重写了 spawn() 不调子进程，但 S1.2 引入的 check_health 会验证 bin 存在。
+    用 shutil.which("cmd.exe" if os.name == "nt" else "echo") 拿真实命令，避免破坏测试。
+    """
+    real_bin = shutil.which("cmd.exe" if os.name == "nt" else "echo")
+    if real_bin:
+        for name in ("fake", "flaky", "boom"):
+            cls = wbase_mod._REGISTRY.get(name)
+            if cls is not None and hasattr(cls, "bin"):
+                cls.bin = real_bin
+                cls.health_probe_args = None  # 跳过探测，只验证 bin 存在
+                cls.health_probe_timeout = 1.0
+                cls.reset_health_cache()
+    yield
+
 
 @pytest.fixture
 def tmp_db(tmp_path):

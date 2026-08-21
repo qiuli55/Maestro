@@ -226,6 +226,51 @@ def ready():
     }
 
 
+@app.get("/api/workers/health")
+def workers_health():
+    """所有已注册 worker 的健康检查状态。
+
+    每个 worker 检查：
+    - bin 路径存在 + 可执行
+    -（可选）--version 探测 5s 超时
+
+    结果缓存 30s，避免每次 dispatch 都探测。
+
+    返回：
+        200 + {"workers": {name: {"ok": bool, "reason": str}}, "all_ok": bool}
+        503 + {"workers": {...}, "all_ok": false, "degraded": [names]} — 有 worker 不健康
+    """
+    results: dict = {}
+    degraded: list[str] = []
+    for name in _wmod.available_workers():
+        try:
+            worker = _wmod.get_worker(name)
+            # 只对 SubprocessWorker 调用 check_health（embedded/minimax 等非子进程 worker
+            # 内部 Python 模块，无 bin/超时等概念，标 ok=True 即可）
+            from maestro.workers.base import SubprocessWorker
+            if isinstance(worker, SubprocessWorker):
+                ok, reason = worker.check_health()
+            else:
+                ok, reason = True, "in-process worker"
+        except KeyError:
+            ok, reason = False, "worker not registered"
+        except Exception as e:  # noqa: BLE001
+            ok, reason = False, f"check_health raised: {type(e).__name__}"
+        results[name] = {"ok": ok, "reason": reason}
+        if not ok:
+            degraded.append(name)
+
+    all_ok = not degraded
+    payload = {"workers": results, "all_ok": all_ok}
+    if not all_ok:
+        payload["degraded"] = degraded
+    if all_ok:
+        return payload
+    # 至少一个 worker 不健康，返回 503 让监控告警
+    from fastapi.responses import JSONResponse
+    return JSONResponse(content=payload, status_code=503)
+
+
 # ---------- REST API ----------
 
 

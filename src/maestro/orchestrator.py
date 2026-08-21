@@ -50,6 +50,16 @@ def _execute_subtask(db_path: str, task_id: str, subtask: dict, timeout: int, mo
 
         worker = get_worker(subtask["worker_type"])
 
+        # Worker 健康预检：避免子进程启动失败后才报错（用户感知是卡死很久）
+        if isinstance(worker, wbase.SubprocessWorker):
+            ok, reason = worker.check_health()
+            if not ok:
+                db.set_subtask_output(tconn, sid, db.FAILED,
+                                      error=f"[worker 不可用] {reason}")
+                db.log_event(tconn, task_id, f"subtask {sid} WORKER_UNHEALTHY", sid,
+                             data={"reason": reason})
+                return
+
         # 沙箱防线 1：外部 CLI（黑盒 agent）派发前对 prompt 做危险指令前置检测。
         # embedded 有工具白名单+审批流兜底，不重复扫描（避免误伤正常代码需求）。
         if isinstance(worker, wbase.SubprocessWorker):

@@ -47,6 +47,65 @@ class SubprocessWorker:
                 continue
         return data.decode("utf-8", errors="replace")
 
+    # ====== 健康检查（worker 启动前/调度前的快速预检）======
+
+    # 子类可覆盖：用于探测的 CLI 参数。None 表示跳过运行时探测（只查 bin 存在）。
+    health_probe_args: list[str] | None = ["--version"]
+    # 探测超时（秒）
+    health_probe_timeout: float = 5.0
+    # 健康检查缓存时间（避免每次 dispatch 都探测）
+    health_cache_ttl: float = 30.0
+    _health_cache: dict[str, tuple[float, bool, str]] = {}
+
+    def check_health(self) -> tuple[bool, str]:
+        """预检：bin 存在 + 可执行 +（可选）快速探测。
+
+        返回 (ok, reason)：
+        - ok=True, reason="ok"：worker 健康
+        - ok=False, reason="..."：失败原因（bin 缺失/不可执行/探测超时）
+
+        结果缓存 health_cache_ttl 秒，避免每个 dispatch 都探测。
+        """
+        import time as _t
+        cache_key = self.name
+        cached = self._health_cache.get(cache_key)
+        if cached:
+            ts, ok, reason = cached
+            if _t.monotonic() - ts < self.health_cache_ttl:
+                return ok, reason
+        ok, reason = self._do_health_check()
+        self._health_cache[cache_key] = (_t.monotonic(), ok, reason)
+        return ok, reason
+
+    @classmethod
+    def reset_health_cache(cls) -> None:
+        """测试用：清掉健康检查缓存（所有实例共享）。"""
+        cls._health_cache.clear()
+
+    def _do_health_check(self) -> tuple[bool, str]:
+        import os as _os
+        if not self.bin:
+            return False, "bin 路径为空（configs/workers.json 未配置）"
+        if not _os.path.exists(self.bin):
+            return False, f"bin 不存在: {self.bin}"
+        if not (_os.access(self.bin, _os.X_OK) or self.bin.endswith((".exe", ".cmd", ".bat"))):
+            return False, f"bin 不可执行: {self.bin}"
+        if self.health_probe_args is None:
+            return True, "ok"
+        try:
+            import subprocess
+            proc = subprocess.run(
+                [self.bin] + list(self.health_probe_args),
+                capture_output=True, timeout=self.health_probe_timeout,
+            )
+            if proc.returncode != 0:
+                return False, f"探测失败 exit={proc.returncode}: {self._decode(proc.stderr)[:200]}"
+            return True, "ok"
+        except subprocess.TimeoutExpired:
+            return False, f"探测超时（>{self.health_probe_timeout}s）— CLI 可能 hang"
+        except OSError as e:
+            return False, f"启动失败: {e}"
+
     def spawn(self, prompt: str, workdir: str, timeout: int,
               task_id: str | None = None, subtask_id: str | None = None) -> WorkerResult:
         """启动子进程。task_id/subtask_id 供需要审批的 worker（embedded）归属审批请求。"""
