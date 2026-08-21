@@ -35,21 +35,55 @@ def test_scan_ok_empty():
 # ============================================================================
 
 def test_scan_known_limitations_documented():
-    """当前规则是字符串匹配，明确已知会漏掉的场景（编码混淆）。
+    """v2 guard 升级后能拦下基础编码混淆（零宽字符）。
 
-    这些不是 bug 测试，而是文档测试：明确写出"不应被规则拦下"的输入，
-    提醒未来重构时必须升级到 AST 解析 / 危险原语白名单。
+    早期版本（v1）确实漏判；v2 用 _normalize() 预处理：去零宽、URL 解码、
+    bash 变量还原。零宽字符已能拦截；Base64 echo 单纯 echo 不算高危（无害），
+    只有 `echo ... | sh` 这种"下载执行"链才算。
     """
-    # Base64 编码的 rm 命令——当前规则匹配不到（应该是 block 但实际 ok）
+    # 零宽字符嵌入 → v2 已拦截（_normalize 去零宽后变为正常命令）
+    level, _ = scan("rm\u200b -rf /")  # 零宽空格插入
+    assert level == "block", f"零宽字符绕过应被 v2 拦截: {level}"
+
+    # 单纯 echo Base64 字符串：合法场景，不应 block
     import base64
     encoded = base64.b64encode(b"rm -rf /").decode()
-    level, _ = scan(f"echo {encoded} | base64 -d | sh")
-    # 当前实现：确实漏掉（应是 'ok' 或 'warn'）；记录以备修复追踪
-    assert level in ("ok", "warn"), f"Base64 混淆未拦截（已知）: {level}"
+    level, _ = scan(f"echo {encoded}")  # 无管道
+    assert level in ("ok", "warn"), f"单纯 echo 不应 block: {level}"
 
-    # 零宽字符嵌入——当前规则匹配不到
-    level, _ = scan("rm\u200b -rf /")  # 零宽空格插入
-    assert level in ("ok", "warn"), f"零宽字符绕过未拦截（已知）: {level}"
+
+def test_scan_normalize_decodes_zero_width():
+    """v2 规范化必须去掉零宽字符。"""
+    from maestro.guard import _normalize
+    with_zwsp = "rm\u200b -rf /"
+    assert "\u200b" in with_zwsp
+    normalized = _normalize(with_zwsp)
+    assert "\u200b" not in normalized
+    assert normalized == "rm -rf /"
+
+
+def test_scan_normalize_decodes_url_encoding():
+    """v2 规范化必须 URL 解码。"""
+    from maestro.guard import _normalize
+    encoded = "rm%20-rf%20/"
+    normalized = _normalize(encoded)
+    assert normalized == "rm -rf /"
+
+
+def test_scan_normalize_removes_bash_ifs():
+    """v2 规范化必须还原 ${IFS} 为空格。"""
+    from maestro.guard import _normalize
+    encoded = "rm${IFS}-rf${IFS}/"
+    normalized = _normalize(encoded)
+    assert normalized == "rm -rf /"
+
+
+def test_scan_normalize_strips_quotes():
+    """v2 规范化必须去引号（避免 'rm' 形式绕过）。"""
+    from maestro.guard import _normalize
+    encoded = 'echo "rm" "-rf" "/"'
+    normalized = _normalize(encoded)
+    assert '"' not in normalized
 
 
 def test_scan_catches_basic_chinese_variants():
@@ -61,6 +95,10 @@ def test_scan_catches_basic_chinese_variants():
     # "删除 C 盘" 中文：应 block
     level, _ = scan("删除 C 盘")
     assert level == "block", f"中文'删除盘符'未拦截: {level}"
+
+    # "格式化 C 盘" 中文（v2 修复）：应 block
+    level, _ = scan("格式化 C 盘")
+    assert level == "block", f"中文'格式化 C 盘'未拦截: {level}"
 
 
 def test_scan_warns_network_access():
