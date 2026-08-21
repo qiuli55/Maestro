@@ -21,7 +21,7 @@ _BLOCK_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(
         r"\b(?:rm|del|erase|rd|rmdir)\b[^\n]{0,40}[a-z]:[\\/]\s*(?:[\\/]|\*|$)", re.I),
      "删除盘符根目录"),
-    (re.compile(r"(?:删除|删掉|清空)\s*[c-z]盘", re.I), "删除系统盘内容"),
+    (re.compile(r"(?:删除|删掉|清空)\s*[c-zC-Z]\s*盘", re.I), "删除系统盘内容"),
     (re.compile(r"\bshutdown\b", re.I), "关机/重启系统"),
     (re.compile(r"(?:关机|重启电脑|关闭系统)", re.I), "关机/重启系统"),
     (re.compile(
