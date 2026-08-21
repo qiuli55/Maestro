@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import hmac
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -55,9 +56,78 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
     allow_credentials=False,  # 无 cookie 鉴权，避免 CSRF
 )
+
+# ====== API 鉴权中间件 ======
+# 启用条件：MAESTRO_API_KEY 环境变量已设（生产部署场景）。
+# 未设时中间件直接放行（本地开发场景，向后兼容）。
+# 白名单（无需鉴权）：/api/healthz, /api/ready, /api/workers/health, /ws/*, 静态资源。
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
+
+
+class _APIKeyAuthMiddleware(BaseHTTPMiddleware):
+    """应用层 API 鉴权：白名单外的 /api/* 必须带 X-API-Key。"""
+
+    _WHITELIST_PATHS = frozenset({
+        "/api/healthz",         # liveness（K8s/容器探针）
+        "/api/ready",           # readiness
+        "/api/workers/health",  # worker 健康
+        "/",                    # 静态首页
+        "/wallpaper",           # Live2D 壁纸页
+    })
+    _WHITELIST_PREFIXES = (
+        "/ws/",                 # WebSocket（前端连 WS 不带 key）
+        "/assets/",             # 静态资源
+        "/static/",             # FastAPI mount 静态
+    )
+
+    def __init__(self, app):
+        super().__init__(app)
+        # 故意不在 __init__ 缓存 key —— dispatch 内每次从 env 读，
+        # 让 monkeypatch.delenv/setenv 能即时生效（测试隔离）。
+
+    async def dispatch(self, request, call_next):
+        path = request.url.path
+        api_key = os.environ.get("MAESTRO_API_KEY", "").strip()
+
+        # 没设 key -> 放行（开发模式）
+        if not api_key:
+            return await call_next(request)
+
+        # 白名单直接放行
+        if path in self._WHITELIST_PATHS or any(
+            path.startswith(p) for p in self._WHITELIST_PREFIXES
+        ):
+            return await call_next(request)
+
+        # /api/* 业务端点要求 X-API-Key 头
+        if path.startswith("/api/"):
+            provided = request.headers.get("x-api-key", "").strip()
+            if not provided:
+                return JSONResponse(
+                    {"error": "missing X-API-Key header"},
+                    status_code=401,
+                )
+            if not _compare_keys(provided, api_key):
+                return JSONResponse(
+                    {"error": "invalid X-API-Key"},
+                    status_code=403,
+                )
+
+        return await call_next(request)
+
+
+def _compare_keys(provided: str, expected: str) -> bool:
+    """常量时间比较，防时序攻击。"""
+    return hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))
+
+
+# 中间件总是挂载——dispatch 内读 env（每次请求都判断当前 env）。
+# 这样测试不需要 reimport server，monkeypatch.setenv/delenv 即可切换鉴权。
+app.add_middleware(_APIKeyAuthMiddleware)
 
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="maestro-task")
 

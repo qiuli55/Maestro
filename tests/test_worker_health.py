@@ -283,7 +283,7 @@ def test_orchestrator_dispatch_fails_fast_when_worker_unhealthy(tmp_path, monkey
         conn = db.init_db()
         try:
             db.create_task(conn, "t_unhealthy", "test")
-            db.set_task_params(conn, "t_unhealthy", scenario="b", worker_type="fake", parallel=False)
+            db.set_task_params(conn, "t_unhealthy", scenario="b", worker_type="fake", parallel=False, no_merge=True)
             db.add_subtasks(conn, "t_unhealthy", [
                 {"id": "t_unhealthy_s0", "desc": "x", "worker_type": "fake"},
             ])
