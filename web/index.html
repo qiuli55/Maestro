@@ -460,6 +460,35 @@
   .win-mini-kind{font-size:9px;color:#7a7aa8;text-align:center}
   .win-mini-drag{flex:1;cursor:grab}
   .win-mini-drag:active{cursor:grabbing}
+
+  /* ── 芙莉莲桌宠挂件（芙莉莲壁纸右上角浮动，与编排器任务状态联动） ── */
+  #pet-frieren {
+    position: fixed; right: 28px; top: 28px;
+    width: 160px; height: 160px;
+    background: url('/wallpaper/models/pet_frieren/spritesheet.png') no-repeat;
+    background-size: 400% 900%;
+    background-position: 0% 0%;
+    z-index: 9999;
+    pointer-events: auto;
+    cursor: grab;
+    image-rendering: -webkit-optimize-contrast;
+    user-select: none;
+  }
+  #pet-frieren:active { cursor: grabbing; }
+  #pet-tip {
+    position: fixed; right: 28px; top: 200px;
+    padding: 5px 10px; border-radius: 8px;
+    background: rgba(16,24,42,.85);
+    border: 1px solid rgba(120,160,255,.35);
+    color: #cdd9ff; font-size: 11px;
+    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s;
+    backdrop-filter: blur(4px);
+    z-index: 10000;
+    white-space: nowrap;
+  }
+  #pet-frieren:hover + #pet-tip { opacity: 1; }
 </style>
 </head>
 <body>
@@ -1018,9 +1047,9 @@
       if(oldRig){
         var oldRigParent=oldRig.closest(".win-msg");
         if(oldRigParent)oldRigParent.classList.remove("has-pet");
+        div.classList.add("has-pet");
+        div.appendChild(oldRig);   // 必须在 if 内：流式重写 innerHTML 会销毁 rig，oldRig 可能为 null
       }
-      div.classList.add("has-pet");
-      div.appendChild(oldRig);
     }
     // 如果是任务消息，更新窗口标题状态 + 桌宠切 run（忙碌感）
     if(w.data.kind==="task"&&text.includes("任务已提交")){
@@ -1289,13 +1318,13 @@
       var fail=tasks.filter(function(t){return t.status==="failed"}).length;
       if(latest&&(latest.status==="running"||latest.status==="pending")){
         dot.className="m-dot running";title.textContent="编排器运行中";
-        sub.innerHTML="当前：<b>"+latest.user_prompt+"</b><br>任务 "+tasks.length+" · 运行 "+runn+" · 完成 "+done+" · 失败 "+fail;
+        sub.innerHTML="当前：<b>"+escapeHtml(latest.user_prompt)+"</b><br>任务 "+tasks.length+" · 运行 "+runn+" · 完成 "+done+" · 失败 "+fail;
       }else if(latest){
         dot.className="m-dot "+(latest.status==="done"?"done":"failed");
         title.textContent=latest.status==="done"?"编排器空闲":"最近任务失败";
-        sub.innerHTML="最近："+statusText(latest.status)+" — <b>"+latest.user_prompt+"</b><br>任务 "+tasks.length+" · 完成 "+done+" · 失败 "+fail;
+        sub.innerHTML="最近："+statusText(latest.status)+" — <b>"+escapeHtml(latest.user_prompt)+"</b><br>任务 "+tasks.length+" · 完成 "+done+" · 失败 "+fail;
       }else{dot.className="m-dot";title.textContent="编排器就绪";sub.textContent="暂无任务 · 去 maestro web 面板发起"}
-      var html="";tasks.slice(0,10).forEach(function(t){var cls=t.status==="done"?"ok":(t.status==="failed"?"fail":"run");html+='<div class="m-item"><span class="st '+cls+'">'+statusText(t.status)+"</span>"+t.user_prompt+"</div>"});
+      var html="";tasks.slice(0,10).forEach(function(t){var cls=t.status==="done"?"ok":(t.status==="failed"?"fail":"run");html+='<div class="m-item"><span class="st '+cls+'">'+statusText(t.status)+"</span>"+escapeHtml(t.user_prompt)+"</div>"});
       listEl.innerHTML=html||'<div class="m-item" style="color:#888">暂无任务</div>';
     }).catch(function(){dot.className="m-dot";title.textContent="编排器未连接";sub.textContent="未找到 Maestro 服务（127.0.0.1:8787）";off.style.display="block"})
   }
@@ -1512,7 +1541,15 @@
               if(!body)return;
               var lastMsg=body.lastElementChild;
               if(lastMsg&&lastMsg.classList.contains("assistant")){
+                // 先摘下挂载在气泡上的桌宠元素，避免被 innerHTML 重写销毁
+                var keepRig=lastMsg.querySelector(".win-pet-rig");
+                var keepPet=lastMsg.querySelector(".win-pet");
+                var keepRigParent=null,keepPetParent=null;
+                if(keepRig){keepRigParent=keepRig.parentNode;keepRig.remove();}
+                if(keepPet){keepPetParent=keepPet.parentNode;keepPet.remove();}
                 lastMsg.innerHTML=escapeHtml(visible)+'<div class="win-time">'+new Date().toLocaleTimeString()+"</div>";
+                if(keepRig&&keepRigParent)keepRigParent.appendChild(keepRig);
+                if(keepPet&&keepPetParent)keepPetParent.appendChild(keepPet);
               }else{
                 winAppendMsg(targetId,"assistant",visible);
               }
@@ -1830,5 +1867,142 @@
   })();
 })();
 </script>
+
+<script>
+// ────────────────────────────────────────────
+//  芙莉莲桌宠挂件 —— 与编排器任务状态机联动
+// ────────────────────────────────────────────
+(function () {
+  var pet = document.getElementById("pet-frieren");
+  var tip = document.getElementById("pet-tip");
+  if (!pet || !tip) return;
+
+  var MAESTRO_PET = "http://127.0.0.1:8787"; // 主 IIFE 的 var MAESTRO 不跨 script 标签，这里直接字面量
+
+  // 9 个桌宠状态 → spritesheet 行号 + fps
+  var STATES = {
+    "idle":         { row: 0, fps: 4,  label: "待机" },
+    "idle-blink":   { row: 1, fps: 4,  label: "眨眼" },
+    "waving":       { row: 2, fps: 6,  label: "挥手" },
+    "failed":       { row: 3, fps: 4,  label: "任务失败" },
+    "running":      { row: 4, fps: 10, label: "工作中" },
+    "running_left": { row: 5, fps: 10, label: "工作中" },
+    "jumping":      { row: 6, fps: 8,  label: "任务完成" },
+    "waiting":      { row: 7, fps: 4,  label: "等待重试" },
+    "review":       { row: 8, fps: 4,  label: "审查中" }
+  };
+  // Maestro 任务 7 态 → 桌宠状态映射
+  var TASK_MAP = {
+    "pending":    "idle",
+    "ready":      "idle",
+    "running":    "running",
+    "done":       "jumping",
+    "failed":     "failed",
+    "retry":      "waiting",
+    "cancelled":  "idle"
+  };
+  var STATE_LABELS = {
+    "pending":   "待拆分",
+    "ready":     "待确认",
+    "running":   "运行中",
+    "done":      "已完成",
+    "failed":    "已失败",
+    "retry":     "重试中",
+    "cancelled": "已取消"
+  };
+
+  var currentState = null;
+  var currentFrame = 0;
+  var animTimer = null;
+  var lastTaskId = null;
+  var lastTaskStatus = null;
+
+  function applyFrame() {
+    var s = STATES[currentState];
+    if (!s) return;
+    var xPct = (currentFrame / 3) * 100;
+    var yPct = (s.row / 8) * 100;
+    pet.style.backgroundPosition = xPct + "% " + yPct + "%";
+  }
+
+  function setState(name) {
+    if (!STATES[name]) return;
+    if (currentState === name && animTimer) return;
+    currentState = name;
+    currentFrame = 0;
+    applyFrame();
+    if (animTimer) clearInterval(animTimer);
+    var interval = 1000 / STATES[name].fps;
+    animTimer = setInterval(function () {
+      currentFrame = (currentFrame + 1) % 4;
+      applyFrame();
+    }, interval);
+  }
+
+  function updateTip(taskStatus) {
+    var label = currentState ? STATES[currentState].label : "";
+    var taskLabel = taskStatus ? (STATE_LABELS[taskStatus] || taskStatus) : "无任务";
+    tip.textContent = "Maestro · " + taskLabel + (label && label !== "待机" ? " · " + label : "");
+  }
+
+  function pollTasks() {
+    fetch(MAESTRO_PET + "/api/tasks?limit=1", { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (tasks) {
+        if (!tasks || !tasks.length) {
+          setState("idle");
+          updateTip(null);
+          return;
+        }
+        var t = tasks[0];
+        if (t.id !== lastTaskId || t.status !== lastTaskStatus) {
+          lastTaskId = t.id;
+          lastTaskStatus = t.status;
+          var mapped = TASK_MAP[t.status] || "idle";
+          setState(mapped);
+          updateTip(t.status);
+        }
+      })
+      .catch(function () { /* 静默：服务未起保持 idle */ });
+  }
+
+  // 启动
+  setState("idle");
+  updateTip(null);
+  pollTasks();
+  setInterval(pollTasks, 2000);
+
+  // 拖拽支持（moved 标志：位移超过 3px 才算拖拽，松手不触发 click 逗趣）
+  var dragging = false, moved = false, offX = 0, offY = 0;
+  pet.addEventListener("mousedown", function (e) {
+    dragging = true; moved = false;
+    var rect = pet.getBoundingClientRect();
+    offX = e.clientX - rect.left;
+    offY = e.clientY - rect.top;
+    pet.style.right = "auto";
+    pet.style.top = rect.top + "px";
+    pet.style.left = rect.left + "px";
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", function (e) {
+    if (!dragging) return;
+    var nx = e.clientX - offX, ny = e.clientY - offY;
+    if (Math.abs(nx - parseFloat(pet.style.left || 0)) > 3 || Math.abs(ny - parseFloat(pet.style.top || 0)) > 3) moved = true;
+    pet.style.left = nx + "px";
+    pet.style.top = ny + "px";
+    if (moved) tip.style.opacity = "0"; // 拖离原位后 tooltip 不再跟随，直接隐藏
+  });
+  document.addEventListener("mouseup", function () { dragging = false; });
+
+  // 点击切换 idle ↔ idle-blink（手动逗趣；拖拽结束不触发）
+  pet.addEventListener("click", function () {
+    if (!moved) {
+      setState(currentState === "idle-blink" ? "idle" : "idle-blink");
+    }
+  });
+})();
+</script>
+<div id="pet-frieren" title="芙莉莲 · Maestro 桌宠"></div>
+<div id="pet-tip">Maestro · 待机</div>
 </body>
 </html>
