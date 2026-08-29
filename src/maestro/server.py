@@ -182,10 +182,14 @@ def _prepare_job(
 
 
 def _execute_job(task_id: str, timeout: int = 600):
-    """后台线程：确认后执行完整链路。"""
+    """后台线程：确认后执行完整链路。异常落 FAILED，避免任务永远停在 RUNNING
+    （线程池的 future 无人取结果，不落库就静默丢失）。"""
     conn = db.init_db()
     try:
         orchestrator.execute_task(conn, task_id, timeout=timeout)
+    except Exception as e:  # noqa: BLE001 — 与 _prepare_job 对齐：执行失败也要落库可见
+        db.set_task_status(conn, task_id, db.FAILED)
+        db.log_event(conn, task_id, "execute FAILED", data={"error": str(e)[:500]})
     finally:
         conn.close()
 
@@ -447,13 +451,8 @@ async def create_task(payload: dict):
     parallel = bool(payload.get("parallel", scenario != "a"))
     no_merge = bool(payload.get("no_merge", False))
     model = payload.get("model") or None
-    # 模型 → 对应 API key 环境变量（供 LLM 调用时读取）
-    if model:
-        from . import config as _cfg
-
-        key_env = _cfg.resolve_model_to_key(model)
-        if key_env:
-            os.environ["ACTIVE_API_KEY"] = os.environ.get(key_env, "")
+    # key 不在这里注入 env：llm.get_client 每次按 provider 从 providers.json
+    # 的 api_key_env 现查，并发任务互不影响（进程级 env 会让不同模型任务互相覆盖 key）。
     # confirm=False 时跳过人工闸门，拆分后立即执行（等价旧行为）
     confirm = bool(payload.get("confirm", True))
     # 任务关联会话：完成后结果写入该会话（对话隔离/任务对话可见结果）

@@ -601,7 +601,7 @@
 </div>
 <script>
 (function(){
-"use use strict".replace("use use","use");
+"use strict";
 
   // ========== WindowManager 多窗口系统 ==========
   var winContainer=document.getElementById("win-container");
@@ -1029,6 +1029,8 @@
     var body=w.el.querySelector(".win-body");
     var div=document.createElement("div");
     div.className="win-msg "+role;
+    // dataset.text 存原文（不含时间戳）：WS 广播去重用
+    div.dataset.text=text;
     div.innerHTML=escapeHtml(text)+'<div class="win-time">'+new Date().toLocaleTimeString()+"</div>";
     body.appendChild(div);
     body.scrollTop=body.scrollHeight;
@@ -1548,6 +1550,7 @@
                 if(keepRig){keepRigParent=keepRig.parentNode;keepRig.remove();}
                 if(keepPet){keepPetParent=keepPet.parentNode;keepPet.remove();}
                 lastMsg.innerHTML=escapeHtml(visible)+'<div class="win-time">'+new Date().toLocaleTimeString()+"</div>";
+                lastMsg.dataset.text=visible;
                 if(keepRig&&keepRigParent)keepRigParent.appendChild(keepRig);
                 if(keepPet&&keepPetParent)keepPetParent.appendChild(keepPet);
               }else{
@@ -1838,7 +1841,16 @@
             // 根据 conv_id 查找窗口
             var w=wins[convId];
             if(w){
-              // 窗口存在，追加消息
+              // 去重：服务端在 SSE 流结束后会把完整回复再广播一遍，而本窗口
+              // 已经流式渲染过同一条回复（dataset.text 存原文）。内容一致时跳过，
+              // 只在本地流式失败（没有对应气泡）时才真正追加兜底。
+              if(role==="assistant"&&content){
+                var body=w.el.querySelector(".win-body");
+                var last=body&&body.lastElementChild;
+                if(last&&last.classList.contains("assistant")&&last.dataset.text===content){
+                  return;
+                }
+              }
               winAppendMsg(convId,role,content);
             }else{
               // 窗口不存在，可以选择创建新窗口或忽略

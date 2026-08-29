@@ -236,7 +236,7 @@ def with_resilience(
                     result = fn(*args, **kwargs)
                     breaker.record_success()
                     return result
-                except BaseException as e:  # noqa: BLE001
+                except Exception as e:  # noqa: BLE001 — KeyboardInterrupt/SystemExit 不参与重试与熔断计数
                     last_exc = e
                     breaker.record_failure()
                     if not is_transient_error(e):

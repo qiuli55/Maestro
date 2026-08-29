@@ -81,9 +81,9 @@ def _execute_subtask(db_path: str, task_id: str, subtask: dict, timeout: int, mo
         res = worker.spawn(subtask["desc"], str(workdir), timeout, task_id=task_id, subtask_id=sid)
 
         if res.timed_out or res.returncode != 0 or res.error:
-            # 重试 1 次
+            # 重试 1 次（task_id/subtask_id 必须带上：embedded 的审批流靠它归属审批单）
             db.log_event(tconn, task_id, f"subtask {sid} failed, retrying", sid, data={"error": _err_msg(res)})
-            res = worker.spawn(subtask["desc"], str(workdir), timeout)
+            res = worker.spawn(subtask["desc"], str(workdir), timeout, task_id=task_id, subtask_id=sid)
 
         if res.timed_out or res.returncode != 0 or res.error:
             db.set_subtask_output(tconn, sid, db.FAILED, error=_err_msg(res))
@@ -223,7 +223,8 @@ def execute_task(
 ) -> str:
     """人工闸门第二段：按库内（可能已编辑）子任务执行完整链路。
 
-    仅接受 READY 状态任务；执行开始后置 RUNNING，结束置 DONE。
+    仅接受 READY 状态任务；执行开始后置 RUNNING，结束置 DONE；
+    子任务仍有 FAILED（串行/无汇总路径）或汇总失败时置 FAILED。
     执行中可取消（db.cancel_task 置 CANCELLED）：串行在派发下一个前检查，
     并行在全部收尾后检查——取消则不汇总、保持 CANCELLED。
     """
@@ -268,9 +269,19 @@ def execute_task(
                 )
                 return task_id
             _execute_subtask(db_path, task_id, st, timeout, model)
-        db.set_task_status(conn, task_id, db.DONE)
-        db.log_event(conn, task_id, "scenario A serial complete", data={"subtasks": [st["id"] for st in subtasks]})
-        _push_result_to_conv(conn, task_id)
+        # 与 resume_incomplete 一致：仍有 FAILED 则任务置 FAILED，不把"全失败"标成 DONE
+        final_subs = db.get_subtasks(conn, task_id)
+        n_failed = sum(1 for s in final_subs if s["status"] == db.FAILED)
+        final_status = db.FAILED if n_failed else db.DONE
+        db.set_task_status(conn, task_id, final_status)
+        db.log_event(
+            conn,
+            task_id,
+            f"scenario A serial complete -> {final_status}",
+            data={"subtasks": [st["id"] for st in subtasks], "n_failed": n_failed},
+        )
+        if final_status == db.DONE:
+            _push_result_to_conv(conn, task_id)
         return task_id
 
     if parallel:
@@ -299,13 +310,24 @@ def execute_task(
 
     subs = db.get_subtasks(conn, task_id)
     if no_merge:
-        # 关闭汇总：各子任务独立产出，不调用 merge/audit
+        # 关闭汇总：各子任务独立产出，不调用 merge/audit；仍有 FAILED 则任务置 FAILED
+        n_failed = sum(1 for s in subs if s["status"] == db.FAILED)
+        if n_failed:
+            db.set_task_status(conn, task_id, db.FAILED)
+            db.log_event(conn, task_id, "no-merge complete -> FAILED", data={"n_failed": n_failed})
+            return task_id
         db.set_task_result(conn, task_id, "（已关闭汇总：各子任务独立产出，见上方子任务列表）", None)
         db.set_task_status(conn, task_id, db.DONE)
         db.log_event(conn, task_id, "no-merge complete")
         _push_result_to_conv(conn, task_id)
         return task_id
-    result = merge.merge(subs, model=model)
+    # 汇总失败（如熔断/网络）必须落 FAILED：既不能停在 RUNNING，也不能拿空报告标 DONE
+    try:
+        result = merge.merge(subs, model=model)
+    except Exception as e:  # noqa: BLE001 — 与 _prepare_job 对齐：失败要落库可见
+        db.set_task_status(conn, task_id, db.FAILED)
+        db.log_event(conn, task_id, "merge FAILED", data={"error": str(e)[:500]})
+        raise
     # 汇总结果落盘
     summary_file = OUTPUTS_ROOT / task_id / "summary.md"
     summary_file.write_text(_render_summary(result), encoding="utf-8")

@@ -49,9 +49,11 @@ def test_worker_exception_isolated_not_crash_task(tmp_db, monkeypatch):
     tid = orchestrator.run_task(tmp_db, "A\nB", scenario="a", worker_type="boom")
     subs = db.get_subtasks(tmp_db, tid)
     assert len(subs) == 2
+    # 隔离：第一个子任务失败后第二个仍被派发，异常不传播
     assert all(s["status"] == db.FAILED for s in subs)
     task = db.get_task(tmp_db, tid)
-    assert task["status"] == db.DONE  # 任务仍完成（子任务失败被记录，不传播）
+    # 子任务全失败时任务置 FAILED（与 resume_incomplete 的失败聚合一致，不标 DONE）
+    assert task["status"] == db.FAILED
     # 错误信息落库（"执行异常"前缀）
     assert "执行异常" in (subs[0]["error"] or "")
 
@@ -69,11 +71,12 @@ def test_unknown_worker_type_isolated(tmp_db, monkeypatch):
     conn.execute("UPDATE subtasks SET worker_type='nope' WHERE id=?", (subs[0]["id"],))
     conn.commit()
     db.set_task_status(tmp_db, tid, db.READY)
-    orchestrator.execute_task(tmp_db, tid)
+    orchestrator.execute_task(tmp_db, tid)  # 异常被隔离，不向调用方传播
     subs = db.get_subtasks(tmp_db, tid)
     assert subs[0]["status"] == db.FAILED
     assert "未注册的 worker" in (subs[0]["error"] or "")
-    assert db.get_task(tmp_db, tid)["status"] == db.DONE
+    # 子任务失败 -> 任务 FAILED（失败聚合，不把全失败误标 DONE）
+    assert db.get_task(tmp_db, tid)["status"] == db.FAILED
 
 
 def test_resume_incomplete(tmp_db, monkeypatch):

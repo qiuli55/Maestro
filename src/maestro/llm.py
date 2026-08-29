@@ -105,14 +105,9 @@ def complete(
             temperature=temperature,
         )
 
-    try:
-        resp = _call()
-    except resilience.CircuitOpenError as e:
-        # 熔断器打开时 fail-fast 返回空串（语义错误，让调用方走错误处理路径）
-        import warnings
-
-        warnings.warn(f"LLM 熔断器打开: {e}", RuntimeWarning, stacklevel=2)
-        return ""
+    # 熔断打开直接抛 CircuitOpenError：静默返回空串会让调用方把空结果当成功
+    # （如 merge 产出空报告仍标 DONE）。异常交给上层（_prepare/_execute_job）落 FAILED。
+    resp = _call()
     return resp.choices[0].message.content or ""
 
 
@@ -156,17 +151,9 @@ def complete_with_tools(
         return _raw_chat(client, model_name, msgs, temperature=0.2, tools=tools)
 
     for _ in range(max_rounds):
-        try:
-            resp = _chat()
-        except resilience.CircuitOpenError:
-            import warnings
-
-            warnings.warn(
-                f"LLM 熔断器打开，跳过本轮工具调用（msgs={len(msgs)}）",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            return ""
+        # 熔断打开直接抛（与 complete 一致），由上层落 FAILED；embedded worker
+        # 的异常由 orchestrator._execute_subtask 隔离为该子任务 FAILED。
+        resp = _chat()
         msg = resp.choices[0].message
         if not getattr(msg, "tool_calls", None):
             return msg.content or ""
