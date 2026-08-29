@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>芙莉莲桌宠 v2 · 4 帧循环动画预览</title>
+<style>
+  :root {
+    --bg-1: #1a1a2e;
+    --bg-2: #16213e;
+    --bg-3: #0f3460;
+    --accent: #b8e1ff;
+    --btn-bg: rgba(74, 144, 226, 0.1);
+    --btn-border: #4a90e2;
+    --btn-active: #4a90e2;
+    --code-bg: rgba(0, 0, 0, 0.4);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: linear-gradient(135deg, var(--bg-1) 0%, var(--bg-2) 50%, var(--bg-3) 100%);
+    font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px;
+  }
+  .container { max-width: 900px; width: 100%; }
+  h1 {
+    font-size: 28px;
+    margin: 0 0 8px;
+    color: var(--accent);
+    text-align: center;
+  }
+  .subtitle {
+    color: #8aa;
+    margin-bottom: 30px;
+    font-size: 14px;
+    text-align: center;
+  }
+
+  .pet-stage {
+    width: 320px;
+    height: 320px;
+    margin: 0 auto;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .pet {
+    width: 100%;
+    height: 100%;
+    background: url('spritesheet.png') no-repeat;
+    /* spritesheet 是 4 列 × 9 行，单帧 = 1/4 宽 × 1/9 高 */
+    background-size: 400% 900%;
+    image-rendering: -webkit-optimize-contrast;
+    transition: filter 0.2s;
+  }
+  /* 每个状态的位置（用 background-position） */
+  /* row 0~8 = yPct 0% / 12.5% / 25% / 37.5% / 50% / 62.5% / 75% / 87.5% / 100% */
+  /* col 0~3 = xPct 0% / 33.33% / 66.67% / 100% */
+  /* 但 CSS background-position y% 与元素高度的 0~100% 对应，spritesheet 自身 900% 高，所以 yPct = row * 12.5%（不是负值，背景图片本身被 background-size 缩放） */
+  /* 实际上 background-position 0% 0% = 显示 spritesheet 左上角（即 row 0, col 0） */
+  /* background-position xPct yPct 表示背景图片的 xPct, yPct 位置对齐元素的 (0,0) */
+  /* spritesheet 缩放后宽 400% × 高 900%，所以 xPct = col/3 * 100%，yPct = row/8 * 100% */
+
+  .status-bar {
+    margin-top: 24px;
+    padding: 14px 20px;
+    background: var(--code-bg);
+    border-radius: 8px;
+    border-left: 3px solid var(--btn-active);
+    text-align: center;
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 14px;
+  }
+  #stateLabel { color: var(--accent); font-weight: bold; }
+  #frameLabel { color: #f1c40f; font-weight: bold; margin-left: 12px; }
+  #fpsLabel   { color: #2ecc71; margin-left: 12px; }
+
+  .controls {
+    margin-top: 24px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .btn {
+    padding: 9px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--btn-border);
+    background: var(--btn-bg);
+    color: #fff;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+    transition: all 0.15s;
+  }
+  .btn:hover { background: rgba(74, 144, 226, 0.25); transform: translateY(-1px); }
+  .btn.active {
+    background: var(--btn-active);
+    border-color: var(--btn-active);
+    box-shadow: 0 0 12px rgba(74, 144, 226, 0.4);
+  }
+
+  .meta {
+    margin-top: 30px;
+    padding: 16px;
+    background: var(--code-bg);
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: #aab;
+  }
+  .meta strong { color: var(--accent); }
+  code {
+    background: rgba(255,255,255,0.05);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--accent);
+  }
+
+  .demo-toggle {
+    margin-top: 16px;
+    text-align: center;
+  }
+  .demo-toggle button {
+    background: rgba(46, 204, 113, 0.15);
+    border: 1px solid #2ecc71;
+    color: #2ecc71;
+    padding: 8px 18px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+  }
+  .demo-toggle button.active { background: #2ecc71; color: #0a0; }
+
+  .footer {
+    margin-top: 40px;
+    text-align: center;
+    color: #667;
+    font-size: 12px;
+  }
+
+  .fps-control {
+    margin-top: 12px;
+    text-align: center;
+    font-size: 12px;
+    color: #88a;
+  }
+  .fps-control input[type="range"] {
+    width: 200px;
+    vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <h1>芙莉莲桌宠 v2 · 4 帧循环动画</h1>
+    <div class="subtitle">9 状态 × 4 帧 · 1280×2880 spritesheet · pet.json v2</div>
+
+    <div class="pet-stage">
+      <div class="pet" id="pet"></div>
+    </div>
+
+    <div class="status-bar">
+      state: <span id="stateLabel">idle</span>
+      frame: <span id="frameLabel">0/4</span>
+      fps: <span id="fpsLabel">4</span>
+    </div>
+
+    <div class="fps-control">
+      调速: <input type="range" id="fpsRange" min="2" max="20" step="1" value="4">
+      <span id="fpsValue">4 fps</span>
+    </div>
+
+    <div class="controls" id="controls">
+      <button class="btn active" data-state="idle">idle 待机</button>
+      <button class="btn" data-state="idle-blink">idle-blink 眨眼</button>
+      <button class="btn" data-state="waving">waving 挥手</button>
+      <button class="btn" data-state="failed">failed 失败</button>
+      <button class="btn" data-state="running">running 工作中</button>
+      <button class="btn" data-state="running_left">running_left</button>
+      <button class="btn" data-state="jumping">jumping 成功</button>
+      <button class="btn" data-state="waiting">waiting 等待</button>
+      <button class="btn" data-state="review">review 审查</button>
+    </div>
+
+    <div class="demo-toggle">
+      <button id="demoBtn">▶ Codex 工作流模拟</button>
+    </div>
+
+    <div class="meta">
+      <strong>Spritesheet 布局：</strong>4 列 × 9 行 = 36 帧，每帧 320×320<br>
+      <strong>布局索引：</strong><br>
+      &nbsp;&nbsp;行 0: idle (frames 0-3) · 行 1: idle-blink (4-7) · 行 2: waving (8-11)<br>
+      &nbsp;&nbsp;行 3: failed (12-15) · 行 4: running (16-19) · 行 5: running_left (20-23)<br>
+      &nbsp;&nbsp;行 6: jumping (24-27) · 行 7: waiting (28-31) · 行 8: review (32-35)<br>
+      <strong>用法：</strong>复制整个 <code>frieren-pet/</code> 目录到 <code>%USERPROFILE%\.codex\pets\</code> 或 <code>~/.codex/pets/</code>
+    </div>
+
+    <div class="footer">
+      Made with ❤️ by Maestro Pet Generator · v2.0 · 2026-08-26
+    </div>
+  </div>
+
+<script>
+// 状态定义：state 名 -> 行号 + 默认 fps
+const STATES = {
+  'idle':         { row: 0, fps: 4 },
+  'idle-blink':   { row: 1, fps: 4 },
+  'waving':       { row: 2, fps: 6 },
+  'failed':       { row: 3, fps: 4 },
+  'running':      { row: 4, fps: 10 },
+  'running_left': { row: 5, fps: 10 },
+  'jumping':      { row: 6, fps: 8 },
+  'waiting':      { row: 7, fps: 4 },
+  'review':       { row: 8, fps: 4 }
+};
+
+const pet = document.getElementById('pet');
+const stateLabel = document.getElementById('stateLabel');
+const frameLabel = document.getElementById('frameLabel');
+const fpsLabel = document.getElementById('fpsLabel');
+const buttons = document.querySelectorAll('.btn');
+const fpsRange = document.getElementById('fpsRange');
+const fpsValue = document.getElementById('fpsValue');
+
+let currentState = null;
+let currentFrame = 0;
+let animTimer = null;
+let demoTimer = null;
+let demoOn = false;
+let currentFps = 4;
+
+const demoSeq = ['running', 'review', 'jumping', 'waving', 'idle'];
+
+function setState(name) {
+  if (!STATES[name]) return;
+  currentState = name;
+  currentFps = STATES[name].fps;
+  fpsRange.value = currentFps;
+  fpsValue.textContent = currentFps + ' fps';
+  fpsLabel.textContent = currentFps;
+  stateLabel.textContent = name;
+  // 启动循环动画
+  startAnim();
+  // 按钮 active
+  buttons.forEach(b => b.classList.toggle('active', b.dataset.state === name));
+}
+
+function startAnim() {
+  if (animTimer) clearInterval(animTimer);
+  currentFrame = 0;
+  updateFrame();
+  const interval = 1000 / currentFps;
+  animTimer = setInterval(() => {
+    currentFrame = (currentFrame + 1) % 4;
+    updateFrame();
+  }, interval);
+}
+
+function updateFrame() {
+  const row = STATES[currentState].row;
+  const xPct = (currentFrame / 3) * 100;
+  const yPct = (row / 8) * 100;
+  pet.style.backgroundPosition = `${xPct}% ${yPct}%`;
+  frameLabel.textContent = `${currentFrame + 1}/4`;
+}
+
+buttons.forEach(b => {
+  b.addEventListener('click', () => {
+    setState(b.dataset.state);
+    if (demoOn) toggleDemo(false);
+  });
+});
+
+fpsRange.addEventListener('input', () => {
+  currentFps = parseInt(fpsRange.value);
+  fpsValue.textContent = currentFps + ' fps';
+  fpsLabel.textContent = currentFps;
+  if (currentState) startAnim();
+});
+
+document.getElementById('demoBtn').addEventListener('click', () => toggleDemo());
+
+function toggleDemo(force) {
+  const want = force === undefined ? !demoOn : force;
+  if (demoOn && !want) {
+    clearInterval(demoTimer);
+    demoTimer = null;
+    demoOn = false;
+    document.getElementById('demoBtn').classList.remove('active');
+    document.getElementById('demoBtn').textContent = '▶ Codex 工作流模拟';
+    return;
+  }
+  if (!demoOn && want) {
+    demoOn = true;
+    document.getElementById('demoBtn').classList.add('active');
+    document.getElementById('demoBtn').textContent = '⏸ 停止模拟';
+    let i = 0;
+    setState(demoSeq[i]);
+    demoTimer = setInterval(() => {
+      i = (i + 1) % demoSeq.length;
+      setState(demoSeq[i]);
+    }, 2400);
+  }
+}
+
+// 默认 idle
+setState('idle');
+</script>
+</body>
+</html>

@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Q芙莉莲 PixiJS 分层桌宠测试</title>
+<style>
+  html,body{margin:0;padding:0;background:#1a1f3a;height:100%;font-family:system-ui;color:#eee;overflow:hidden}
+  #wrap{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+  canvas{image-rendering:pixelated;background:#0a0e1f;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.6)}
+  .ctrl{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:900px}
+  button{background:#3b4a7a;color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px}
+  button:hover{background:#5061a3}
+  button.active{background:#7a5bcf}
+  .info{position:fixed;top:8px;left:8px;background:rgba(0,0,0,.5);padding:6px 10px;border-radius:4px;font-size:11px;color:#9bb;font-family:monospace}
+  .stage{position:relative}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div class="stage">
+    <canvas id="cv" width="512" height="512"></canvas>
+    <div class="info" id="info">loading...</div>
+  </div>
+  <div class="ctrl">
+    <button data-pose="idle" class="active">idle</button>
+    <button data-pose="walk">walk</button>
+    <button data-pose="run">run</button>
+    <button data-pose="jump">jump</button>
+    <button data-pose="lift">lift 举杖</button>
+    <button data-pose="sit">sit</button>
+    <button data-pose="climb">climb</button>
+    <button data-pose="lie">lie</button>
+    <button data-pose="wave">wave 挥手</button>
+    <button data-pose="nod">nod 点头</button>
+    <button data-pose="bounce">bounce 跳跳</button>
+    <button data-pose="magic">magic 法阵</button>
+    <button data-pose="attack">attack 攻击</button>
+  </div>
+</div>
+
+<script>
+// ====== Q芙莉莲 18 层分层桌宠 ======
+// 每个 layer 有 cx/cy = 原图 bbox 中心（src 1280x1280 坐标系）
+// 绘制时：layer_rel = (cx - 640) * S, (cy - 640) * S  （相对画布中心）
+// 腿/鞋 pivot='top' → 用 bbox top-center 作为锚点（便于腿绕髋关节旋转）
+
+const SRC = 1280;
+// 芙莉莲在 1280x1280 画布上的实际 alpha bbox 是 (241, 161, 932, 1194)
+// 实际中心 = ((241+932)/2, (161+1194)/2) = (586.5, 677.5)
+const SRC_CX = 586.5;
+const SRC_CY = 677.5;
+
+const LAYERS = [
+  // 视觉顺序：从底到顶画
+  // 后景（z 最低）
+  { name:'back hair',  src:'back hair_crop.png',  cx:634, cy:522 },
+  // 颈部
+  { name:'neck',       src:'neck_crop.png',       cx:652, cy:514 },
+  // 中景身体
+  { name:'topwear',    src:'topwear_crop.png',    cx:624, cy:852 },
+  { name:'neckwear',   src:'neckwear_crop.png',   cx:640, cy:614 },
+  // 腿/鞋：画在 topwear 之后（z 在袍上），pivot=top
+  { name:'legwear_l',  src:'legwear_left.png',  cx:566, cy:1035, pivot:'top', kind:'leg-l' },
+  { name:'legwear_r',  src:'legwear_right.png', cx:706, cy:1031, pivot:'top', kind:'leg-r' },
+  { name:'footwear_l', src:'footwear_left.png',  cx:542, cy:1096, pivot:'top', kind:'foot-l' },
+  { name:'footwear_r', src:'footwear_right.png', cx:710, cy:1098, pivot:'top', kind:'foot-r' },
+  // 左右臂 group（肩 → 肘 → 手，独立绑骨，肘部可弯曲）
+  // shoulderSrc.y = PNG 可见内容顶部对应的 src 坐标
+  // forearm_l.png pivot=top, cy=650, 可见内容 y=0..234 → src y=650..884
+  // forearm_r.png pivot=top, cy=670, 可见内容 y=0..233 → src y=670..903
+  { name:'arm_l',  src:'forearm_l.png',  cx:507, cy:650, pivot:'top',
+    kind:'arm-l',
+    shoulderSrc: { x: 506, y: 650 },
+    elbowSrc:    { x: 506, y: 760 },
+    forearmSize: { w: 187, h: 347 } },
+  { name:'arm_r',  src:'forearm_r.png',  cx:720, cy:670, pivot:'top',
+    kind:'arm-r',
+    shoulderSrc: { x: 720, y: 670 },
+    elbowSrc:    { x: 720, y: 780 },
+    forearmSize: { w: 201, h: 517 } },
+  { name:'objects',    src:'objects_crop.png',    cx:474, cy:675, kind:'staff' },
+  // 脸和五官
+  { name:'face',       src:'face_crop.png',       cx:630, cy:405 },
+  { name:'ears',       src:'ears_crop.png',       cx:606, cy:348 },
+  { name:'eyewhite',   src:'eyewhite_crop.png',   cx:632, cy:370 },
+  { name:'irides',     src:'irides_crop.png',     cx:634, cy:414 },
+  { name:'eyelash',    src:'eyelash_crop.png',    cx:634, cy:410 },
+  { name:'eyebrow',    src:'eyebrow_crop.png',    cx:634, cy:350 },
+  { name:'nose',       src:'nose_crop.png',       cx:629, cy:446 },
+  { name:'mouth',      src:'mouth_crop.png',      cx:629, cy:481 },
+  // 顶层：前发（帽已移除）
+  { name:'front hair', src:'front hair_crop.png', cx:639, cy:325, kind:'frontHair' },
+];
+
+const CANVAS = 512;
+const S = CANVAS / SRC;
+
+let pose = 'idle';
+let t0 = performance.now();
+
+const imgs = {};
+window.__imgs = imgs;
+Promise.all(LAYERS.map(l => new Promise(r => {
+  const img = new Image();
+  img.onload = () => { imgs[l.name] = img; r(); };
+  img.onerror = () => { console.warn('failed:', l.src); r(); };
+  img.src = l.src;
+}))).then(() => {
+  document.getElementById('info').textContent = `loaded ${Object.keys(imgs).length}/${LAYERS.length} layers`;
+  window.__debug = new URLSearchParams(location.search).has('debug');
+  requestAnimationFrame(loop);
+});
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+const POSES = {
+  idle: { speed: 0.5, amp: 0.15, type: 'idle' },
+  walk: { speed: 4.0, amp: 1.0, type: 'walk' },
+  run:  { speed: 7.0, amp: 1.3, type: 'walk' },
+  jump: { speed: 2.5, amp: 1.0, type: 'jump' },
+  lift: { speed: 1.2, amp: 1.0, type: 'lift' },
+  sit:  { speed: 0.3, amp: 0.05, type: 'sit' },
+  climb:{ speed: 1.5, amp: 1.0, type: 'climb' },
+  lie:  { speed: 0.2, amp: 0.05, type: 'lie' },
+  wave: { speed: 3.0, amp: 1.0, type: 'wave' },
+  nod:  { speed: 2.0, amp: 1.0, type: 'nod' },
+  bounce:{ speed: 3.0, amp: 1.0, type: 'bounce' },
+  magic:{ speed: 1.5, amp: 1.0, type: 'magic' },
+  attack:{ speed: 2.5, amp: 1.0, type: 'attack' },
+};
+
+// pivot='top' 时锚点是 src (cx, cy) = bbox top-center
+// pivot='center' (默认) 锚点是 src (cx, cy) = bbox center
+// 计算 layer 在 canvas 上的位置：(srcX - SRC_CX) * S, (srcY - SRC_CY) * S
+function relX(srcX) { return (srcX - SRC_CX) * S; }
+function relY(srcY) { return (srcY - SRC_CY) * S; }
+
+// ====== 手臂 group：肩 → 肘 → 腕 三段绑骨 ======
+// 当前切层限制：芙莉莲大袖是 topwear 一部分，sleeve PNG 只有袖口+手段。
+// 因此 drawArmGroup 直接画 sleeve PNG 绕肩旋转，肘部位置用圆点标记。
+function drawArmGroup(shoulderSrc, elbowSrc, shoulderRotDeg, elbowRotDeg, wristRotDeg, forearmImg) {
+  if (!forearmImg) return;
+  const sx = relX(shoulderSrc.x);
+  const sy = relY(shoulderSrc.y);
+  const ex = relX(elbowSrc.x);
+  const ey = relY(elbowSrc.y);
+
+  // ---- 1. 整条 sleeve 绕肩旋转（含袖口+手） ----
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(shoulderRotDeg * Math.PI / 180);
+  const fw = forearmImg.width * S;
+  const fh = forearmImg.height * S;
+  // pivot='top'：图片顶部中心落在 (0, 0)
+  ctx.drawImage(forearmImg, -fw/2, 0, fw, fh);
+
+  // ---- 2. 肘部圆点（关节标记，在 sleeve 中段位置） ----
+  // 由于 sleeve PNG 实际内容只占下半段，肘部位置用 PNG 高度 50% 处标记
+  ctx.fillStyle = 'rgba(180, 160, 160, 0.6)';
+  ctx.beginPath();
+  ctx.arc(0, fh * 0.5, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ---- 3. 腕部圆点（在前臂末端） ----
+  ctx.fillStyle = 'rgba(180, 160, 160, 0.5)';
+  ctx.beginPath();
+  ctx.arc(0, fh, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawLayer(layer, relXPos, relYPos, rotDeg, scale=S, alpha=1) {
+  const img = imgs[layer.name];
+  if (!img) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const w = img.width * scale;
+  const h = img.height * scale;
+  ctx.translate(relXPos, relYPos);
+  ctx.rotate(rotDeg * Math.PI / 180);
+  if (layer.pivot === 'top') {
+    ctx.translate(-w/2, 0);
+  } else {
+    ctx.translate(-w/2, -h/2);
+  }
+  ctx.drawImage(img, 0, 0, w, h);
+  if (window.__debug) {
+    ctx.strokeStyle = 'red';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-0.5, -0.5, w + 1, h + 1);
+    ctx.fillStyle = 'lime';
+    ctx.fillRect(-1, -1, 3, 3);
+  }
+  ctx.restore();
+}
+
+function loop(now) {
+  const t = (now - t0) / 1000;
+  ctx.clearRect(0, 0, CANVAS, CANVAS);
+
+  const cx = CANVAS/2;
+  const cy = CANVAS/2;
+
+  let bodyBob = 0;
+  let bodyRot = 0;
+  let bodyScaleY = 1;
+  let bodyScale = 1;
+  let bodyOffsetX = 0;
+  const poseDef = POSES[pose];
+
+  // ====== 人体骨骼关节（按解剖学命名） ======
+  // 颈椎 (head_neck): head 整体相对 body 旋转
+  let headRot = 0, headOffY = 0, frontHairOff = 0;
+  // 肩关节 (shoulder_L/R): 上臂相对 body 旋转
+  let shoulderL = 0, shoulderR = 0;
+  // 肘关节 (elbow_L/R): 前臂相对上臂旋转
+  let elbowL = 0, elbowR = 0;
+  // 腕关节 (wrist_L/R): 手腕相对前臂旋转
+  let wristL = 0, wristR = 0;
+  // 髋关节 (hip_L/R): 大腿相对 body 旋转
+  let hipL = 0, hipR = 0;
+  // 膝关节 (knee_L/R): 小腿相对大腿旋转
+  let kneeL = 0, kneeR = 0;
+  // 踝关节 (ankle_L/R): 脚相对小腿旋转 + 抬脚
+  let ankleL = 0, ankleR = 0, ankleLiftL = 0, ankleLiftR = 0;
+  // 法杖 (staff_root + staff_tip 简化版)
+  let staffRot = 0, staffOff = 0;
+
+  if (pose === 'walk' || pose === 'run') {
+    const amp = poseDef.amp;
+    const t2 = t * Math.PI * 2 * poseDef.speed;
+    // 大腿摆 + 小腿反向 + 踝关节调整
+    hipL = Math.sin(t2) * 25 * amp;
+    hipR = Math.sin(t2 + Math.PI) * 25 * amp;
+    kneeL = -Math.max(0, Math.sin(t2 + Math.PI)) * 30 * amp;  // 后摆腿弯膝
+    kneeR = -Math.max(0, Math.sin(t2)) * 30 * amp;
+    ankleL = Math.sin(t2 + Math.PI) * 18 * amp;
+    ankleR = Math.sin(t2) * 18 * amp;
+    ankleLiftL = -Math.max(0, Math.sin(t2)) * 6 * amp;
+    ankleLiftR = -Math.max(0, Math.sin(t2 + Math.PI)) * 6 * amp;
+    bodyBob = Math.abs(Math.sin(t2 * 2)) * 4 * amp;
+  } else if (pose === 'jump') {
+    bodyBob = -Math.abs(Math.sin(t * Math.PI * 2 * poseDef.speed)) * 30;
+    hipL = 15; hipR = -15;
+    kneeL = 25; kneeR = -25;
+    ankleL = 25; ankleR = -25;
+  } else if (pose === 'lift') {
+    staffRot = -Math.sin(t * Math.PI * 2 * poseDef.speed) * 15 - 30;
+    staffOff = -Math.abs(Math.sin(t * Math.PI * 2 * poseDef.speed)) * 10;
+    headOffY = -2;
+    const liftBob = Math.sin(t * Math.PI * 2 * poseDef.speed) * 8;
+    shoulderL = 145 + liftBob * 0.3;
+    elbowL = -20;
+    shoulderR = -145 - liftBob * 0.3;
+    elbowR = -20;
+    wristL = -15; wristR = -15;
+    bodyBob = 20;
+  } else if (pose === 'sit') {
+    bodyBob = 6;
+    bodyScaleY = 0.94;
+    hipL = 35; hipR = 35;
+    kneeL = 70; kneeR = 70;
+    ankleL = 35; ankleR = 35;
+  } else if (pose === 'climb') {
+    bodyRot = 12;
+    bodyBob = -2;
+    hipL = 20; hipR = -20;
+    kneeL = 30; kneeR = -30;
+    ankleL = 30; ankleR = -30;
+  } else if (pose === 'lie') {
+    bodyRot = 85;
+    bodyBob = 20;
+    bodyOffsetX = 8;
+  } else if (pose === 'wave') {
+    bodyRot = Math.sin(t * Math.PI * 2 * poseDef.speed) * 5;
+    const wavePhase = Math.sin(t * Math.PI * 2 * poseDef.speed);
+    // 右臂抬起挥：canvas rotate 顺时针为正，但 y 向下 → 负值=向右挥
+    shoulderR = -90 + wavePhase * 30;    // -90°=水平右, -120°=右上方
+    elbowR = -25 + wavePhase * 10;
+    wristR = -20 + wavePhase * 25;
+    shoulderL = 5;
+    elbowL = -8;
+  } else if (pose === 'nod') {
+    headOffY = Math.abs(Math.sin(t * Math.PI * 2 * poseDef.speed)) * 4;
+    headRot = Math.sin(t * Math.PI * 2 * poseDef.speed) * 8;
+    frontHairOff = Math.sin(t * Math.PI * 2 * poseDef.speed) * 2;
+  } else if (pose === 'bounce') {
+    bodyBob = -Math.abs(Math.sin(t * Math.PI * 2 * poseDef.speed)) * 25;
+    hipL = -25; hipR = -25;
+  } else if (pose === 'magic') {
+    staffRot = Math.sin(t * Math.PI * 2 * poseDef.speed) * 360 * 0.3;
+    staffOff = -15 - Math.abs(Math.sin(t * Math.PI * 2 * poseDef.speed)) * 10;
+    const magicBob = Math.sin(t * Math.PI * 2 * poseDef.speed) * 12;
+    // 双臂举过头顶（减小角度避免袖子飞出画布太远）
+    shoulderL = 140 + magicBob * 0.3;
+    shoulderR = -140 - magicBob * 0.3;
+    elbowL = -30 + magicBob * 0.2;
+    elbowR = -30 - magicBob * 0.2;
+    wristL = -25; wristR = -25;
+    bodyScale = 0.7;
+    bodyBob = 70;
+  } else if (pose === 'attack') {
+    const t2 = t * Math.PI * 2 * poseDef.speed;
+    staffRot = -Math.sin(t2) * 60 - 30;
+    staffOff = -Math.abs(Math.sin(t2)) * 15;
+    shoulderR = -Math.sin(t2) * 30 - 20;   // 右肩后拉蓄力
+    elbowR = -10;
+    hipL = Math.sin(t2) * 15;
+    hipR = Math.sin(t2 + Math.PI) * 15;
+    bodyRot = -Math.sin(t2) * 5;
+  } else {  // idle
+    bodyBob = Math.sin(t * 1.5) * 2;
+    bodyRot = Math.sin(t * 0.8) * 1.5;
+    headRot = Math.sin(t * 0.6) * 2;
+  }
+
+  // 全局 transform：画布中心 + body bob/rotate/scale
+  ctx.save();
+  ctx.translate(cx + bodyOffsetX, cy + bodyBob);
+  ctx.rotate(bodyRot * Math.PI / 180);
+  ctx.scale(bodyScale, bodyScaleY);
+
+  for (const layer of LAYERS) {
+    const img = imgs[layer.name];
+    if (!img) continue;
+
+    let rx = relX(layer.cx);
+    let ry = relY(layer.cy);
+    let rot = 0;
+
+    // ====== 髋关节（大腿根）======
+    if (layer.kind === 'leg-l') {
+      rot = hipL;
+    } else if (layer.kind === 'leg-r') {
+      rot = hipR;
+    }
+    // ====== 踝关节（鞋）—— 跟随小腿绕膝旋转 ======
+    else if (layer.kind === 'foot-l') {
+      rx = relX(542); ry = relY(1096);
+      rot = hipL;  // 简化为跟大腿同角度（膝关节待后续拆分）
+      ry += ankleLiftL;
+    } else if (layer.kind === 'foot-r') {
+      rx = relX(710); ry = relY(1098);
+      rot = hipR;
+      ry += ankleLiftR;
+    }
+    // ====== 肩 + 肘关节（arm group）======
+    else if (layer.kind === 'arm-l') {
+      // 完整手臂：shoulder + elbow
+      drawArmGroup(
+        layer.shoulderSrc, layer.elbowSrc,
+        shoulderL, elbowL, wristL,
+        img
+      );
+      continue;
+    } else if (layer.kind === 'arm-r') {
+      drawArmGroup(
+        layer.shoulderSrc, layer.elbowSrc,
+        shoulderR, elbowR, wristR,
+        img
+      );
+      continue;
+    }
+    // ====== 法杖 ======
+    else if (layer.kind === 'staff') {
+      rot = staffRot;
+      ry += staffOff;
+    }
+    // ====== 前发（帽已移除） ======
+    else if (layer.kind === 'frontHair') {
+      rx += frontHairOff * 2;
+    }
+
+    // 头部层（脸+五官+耳）一起随头偏
+    const HEAD_LAYERS = ['face','ears','eyewhite','irides','eyelash','eyebrow','nose','mouth'];
+    if (HEAD_LAYERS.includes(layer.name)) {
+      ry += headOffY * 5;
+    }
+
+    drawLayer(layer, rx, ry, rot);
+  }
+
+  ctx.restore();
+
+  // 特效 overlay（举手/法阵/攻击时的发光效果）
+function drawEffects(t, poseDef) {
+  if (pose !== 'magic' && pose !== 'attack') return;
+
+  const pulse = (Math.sin(t * Math.PI * 2 * poseDef.speed) + 1) / 2;
+  const r = 18 + pulse * 8;
+  const cx = CANVAS/2;
+  const cy = CANVAS/2;
+
+  // 头顶法阵/光球（在 body 之上，独立坐标）
+  const headTopX = cx;
+  const headTopY = cy - 130 * bodyScale + bodyBob * 0.3;
+
+  // 外层光晕
+  const grad = ctx.createRadialGradient(headTopX, headTopY, r * 0.3, headTopX, headTopY, r * 2.5);
+  if (pose === 'magic') {
+    grad.addColorStop(0, `rgba(180, 130, 255, ${0.6 + pulse * 0.4})`);
+    grad.addColorStop(0.4, `rgba(140, 90, 220, ${0.3 + pulse * 0.2})`);
+    grad.addColorStop(1, 'rgba(80, 50, 180, 0)');
+  } else {
+    grad.addColorStop(0, `rgba(255, 200, 100, ${0.6 + pulse * 0.4})`);
+    grad.addColorStop(0.4, `rgba(255, 140, 50, ${0.3 + pulse * 0.2})`);
+    grad.addColorStop(1, 'rgba(180, 80, 30, 0)');
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, CANVAS, CANVAS);
+
+  // 中心球
+  ctx.beginPath();
+  ctx.arc(headTopX, headTopY, r * 0.6, 0, Math.PI * 2);
+  ctx.fillStyle = pose === 'magic'
+    ? `rgba(220, 180, 255, ${0.7 + pulse * 0.3})`
+    : `rgba(255, 220, 140, ${0.7 + pulse * 0.3})`;
+  ctx.fill();
+
+  // 内核
+  ctx.beginPath();
+  ctx.arc(headTopX, headTopY, r * 0.25, 0, Math.PI * 2);
+  ctx.fillStyle = pose === 'magic' ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 200, 0.95)';
+  ctx.fill();
+
+  // 双手指尖光点（如果举手姿态）
+  if (pose === 'magic' && bodyScale < 0.9) {
+    const handLX = cx - 90 * bodyScale;
+    const handRX = cx + 90 * bodyScale;
+    const handY = cy - 130 * bodyScale + bodyBob * 0.3;
+    for (const hx of [handLX, handRX]) {
+      const hgrad = ctx.createRadialGradient(hx, handY, 2, hx, handY, 20);
+      hgrad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+      hgrad.addColorStop(0.4, 'rgba(180, 130, 255, 0.5)');
+      hgrad.addColorStop(1, 'rgba(140, 90, 220, 0)');
+      ctx.fillStyle = hgrad;
+      ctx.fillRect(hx - 25, handY - 25, 50, 50);
+    }
+  }
+}
+
+// 特效 overlay（举手/法阵/攻击时的发光效果）
+  drawEffects(t, poseDef);
+
+  if (Math.floor(t * 4) % 4 === 0) {
+    document.getElementById('info').textContent = `pose: ${pose} | layers: ${LAYERS.length} | loaded: ${Object.keys(imgs).length}`;
+  }
+  requestAnimationFrame(loop);
+}
+
+document.querySelectorAll('button[data-pose]').forEach(b => {
+  b.addEventListener('click', () => {
+    pose = b.dataset.pose;
+    document.querySelectorAll('button[data-pose]').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+  });
+});
+</script>
+</body>
+</html>

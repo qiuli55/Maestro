@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Q芙莉莲 PixiJS 分层桌宠测试</title>
+<style>
+  html,body{margin:0;padding:0;background:#1a1f3a;height:100%;font-family:system-ui;color:#eee;overflow:hidden}
+  #wrap{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+  canvas{image-rendering:pixelated;background:#0a0e1f;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.6)}
+  .ctrl{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:900px}
+  button{background:#3b4a7a;color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px}
+  button:hover{background:#5061a3}
+  button.active{background:#7a5bcf}
+  .info{position:fixed;top:8px;left:8px;background:rgba(0,0,0,.5);padding:6px 10px;border-radius:4px;font-size:11px;color:#9bb;font-family:monospace}
+  .stage{position:relative}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div class="stage">
+    <canvas id="cv" width="512" height="512"></canvas>
+    <div class="info" id="info">loading...</div>
+  </div>
+  <div class="ctrl">
+    <button data-pose="idle" class="active">idle</button>
+    <button data-pose="walk">walk</button>
+    <button data-pose="run">run</button>
+    <button data-pose="jump">jump</button>
+    <button data-pose="lift">lift 举杖</button>
+    <button data-pose="sit">sit</button>
+    <button data-pose="climb">climb</button>
+    <button data-pose="lie">lie</button>
+    <button data-pose="wave">wave 挥手</button>
+    <button data-pose="nod">nod 点头</button>
+    <button data-pose="bounce">bounce 跳跳</button>
+    <button data-pose="magic">magic 法阵</button>
+    <button data-pose="attack">attack 攻击</button>
+  </div>
+</div>
+
+<script>
+// ====== Q芙莉莲 18 层分层桌宠 ======
+// 每个 layer 有 cx/cy = 原图 bbox 中心（src 1280x1280 坐标系）
+// 绘制时：layer_rel = (cx - 640) * S, (cy - 640) * S  （相对画布中心）
+// 腿/鞋 pivot='top' → 用 bbox top-center 作为锚点（便于腿绕髋关节旋转）
+
+const SRC = 1280;
+// 芙莉莲在 1280x1280 画布上的实际 alpha bbox 是 (241, 161, 932, 1194)
+// 实际中心 = ((241+932)/2, (161+1194)/2) = (586.5, 677.5)
+const SRC_CX = 586.5;
+const SRC_CY = 677.5;
+
+const LAYERS = [
+  // 视觉顺序：从底到顶画
+  // 后景（z 最低）
+  { name:'back hair',  src:'../back hair_crop.png',  cx:634, cy:522 },
+  // 颈部
+  { name:'neck',       src:'../neck_crop.png',       cx:652, cy:514 },
+  // 中景身体
+  { name:'topwear',    src:'../topwear_crop.png',    cx:624, cy:852 },
+  { name:'neckwear',   src:'../neckwear_crop.png',   cx:640, cy:614 },
+  // 腿/鞋：画在 topwear 之后（z 在袍上），pivot=top
+  { name:'legwear_l',  src:'../legwear_left.png',  cx:566, cy:1035, pivot:'top', kind:'leg-l' },
+  { name:'legwear_r',  src:'../legwear_right.png', cx:706, cy:1031, pivot:'top', kind:'leg-r' },
+  { name:'footwear_l', src:'../footwear_left.png',  cx:542, cy:1096, pivot:'top', kind:'foot-l' },
+  { name:'footwear_r', src:'../footwear_right.png', cx:710, cy:1098, pivot:'top', kind:'foot-r' },
+  // 袖手、法杖
+  { name:'handwear',   src:'../handwear_crop.png',   cx:659, cy:766, kind:'hands' },
+  { name:'objects',    src:'../objects_crop.png',    cx:474, cy:675, kind:'staff' },
+  // 脸和五官
+  { name:'face',       src:'../face_crop.png',       cx:630, cy:405 },
+  { name:'ears',       src:'../ears_crop.png',       cx:606, cy:348 },
+  { name:'eyewhite',   src:'../eyewhite_crop.png',   cx:632, cy:370 },
+  { name:'irides',     src:'../irides_crop.png',     cx:634, cy:414 },
+  { name:'eyelash',    src:'../eyelash_crop.png',    cx:634, cy:410 },
+  { name:'eyebrow',    src:'../eyebrow_crop.png',    cx:634, cy:350 },
+  { name:'nose',       src:'../nose_crop.png',       cx:629, cy:446 },
+  { name:'mouth',      src:'../mouth_crop.png',      cx:629, cy:481 },
+  // 顶层：前发 + 帽
+  { name:'front hair', src:'../front hair_crop.png', cx:639, cy:325, kind:'frontHair' },
+  { name:'headwear',   src:'../headwear_crop.png',   cx:638, cy:302, kind:'hat' },
+];
+
+const CANVAS = 512;
+const S = CANVAS / SRC;
+
+let pose = 'idle';
+let t0 = performance.now();
+
+const imgs = {};
+window.__imgs = imgs;
+Promise.all(LAYERS.map(l => new Promise(r => {
+  const img = new Image();
+  img.onload = () => { imgs[l.name] = img; r(); };
+  img.onerror = () => { console.warn('failed:', l.src); r(); };
+  img.src = l.src;
+}))).then(() => {
+  document.getElementById('info').textContent = `loaded ${Object.keys(imgs).length}/${LAYERS.length} layers`;
+  window.__debug = new URLSearchParams(location.search).has('debug');
+  requestAnimationFrame(loop);
+});
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+const POSES = {
+  idle: { speed: 0.5, amp: 0.15, type: 'idle' },
+  walk: { speed: 4.0, amp: 1.0, type: 'walk' },
+  run:  { speed: 7.0, amp: 1.3, type: 'walk' },
+  jump: { speed: 2.5, amp: 1.0, type: 'jump' },
+  lift: { speed: 1.2, amp: 1.0, type: 'lift' },
+  sit:  { speed: 0.3, amp: 0.05, type: 'sit' },
+  climb:{ speed: 1.5, amp: 1.0, type: 'climb' },
+  lie:  { speed: 0.2, amp: 0.05, type: 'lie' },
+  wave: { speed: 3.0, amp: 1.0, type: 'wave' },
+  nod:  { speed: 2.0, amp: 1.0, type: 'nod' },
+  bounce:{ speed: 3.0, amp: 1.0, type: 'bounce' },
+  magic:{ speed: 1.5, amp: 1.0, type: 'magic' },
+  attack:{ speed: 2.5, amp: 1.0, type: 'attack' },
+};
+
+// pivot='top' 时锚点是 src (cx, cy) = bbox top-center
+// pivot='center' (默认) 锚点是 src (cx, cy) = bbox center
+// 计算 layer 在 canvas 上的位置：(srcX - SRC_CX) * S, (srcY - SRC_CY) * S
+function relX(srcX) { return (srcX - SRC_CX) * S; }
+function relY(srcY) { return (srcY - SRC_CY) * S; }
+
+function drawLayer(layer, relXPos, relYPos, rotDeg, scale=S, alpha=1) {
+  const img = imgs[layer.name];
+  if (!img) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const w = img.width * scale;
+  const h = img.height * scale;
+  ctx.translate(relXPos, relYPos);
+  ctx.rotate(rotDeg * Math.PI / 180);
+  if (layer.pivot === 'top') {
+    ctx.translate(-w/2, 0);
+  } else {
+    ctx.translate(-w/2, -h/2);
+  }
+  ctx.drawImage(img, 0, 0, w, h);
+  if (window.__debug) {
+    ctx.strokeStyle = 'red';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-0.5, -0.5, w + 1, h + 1);
+    ctx.fillStyle = 'lime';
+    ctx.fillRect(-1, -1, 3, 3);
+  }
+  ctx.restore();
+}
+
+function loop(now) {
+  const t = (now - t0) / 1000;
+  ctx.clearRect(0, 0, CANVAS, CANVAS);
+
+  const cx = CANVAS/2;
+  const cy = CANVAS/2;
+
+  let bodyBob = 0;
+  let bodyRot = 0;
+  let bodyScaleY = 1;
+  let bodyOffsetX = 0;
+  const poseDef = POSES[pose];
+
+  let legLRot = 0, legRRot = 0;
+  let footLRot = 0, footRRot = 0;
+  let footLOff = 0, footROff = 0;
+  let handRot = 0;
+  let staffRot = 0;
+  let staffOff = 0;
+  let headOffX = 0, headOffY = 0, headRot = 0;
+  let frontHairOff = 0;
+
+  if (pose === 'walk' || pose === 'run') {
+    const amp = poseDef.amp;
+    const t2 = t * Math.PI * 2 * poseDef.speed;
+    legLRot = Math.sin(t2) * 25 * amp;
+    legRRot = Math.sin(t2 + Math.PI) * 25 * amp;
+    footLRot = Math.sin(t2 + Math.PI) * 18 * amp;
+    footRRot = Math.sin(t2) * 18 * amp;
+    footLOff = -Math.max(0, Math.sin(t2)) * 6 * amp;
+    footROff = -Math.max(0, Math.sin(t2 + Math.PI)) * 6 * amp;
+    bodyBob = Math.abs(Math.sin(t2 * 2)) * 4 * amp;
+  } else if (pose === 'jump') {
+    bodyBob = -Math.abs(Math.sin(t * Math.PI * 2 * poseDef.speed)) * 30;
+    legLRot = 15;
+    legRRot = -15;
+    footLRot = 25;
+    footRRot = -25;
+  } else if (pose === 'lift') {
+    staffRot = -Math.sin(t * Math.PI * 2 * poseDef.speed) * 15 - 30;
+    staffOff = -Math.abs(Math.sin(t * Math.PI * 2 * poseDef.speed)) * 10;
+    headOffY = -2;
+    handRot = -10;
+  } else if (pose === 'sit') {
+    bodyBob = 6;
+    bodyScaleY = 0.94;
+    legLRot = 35;
+    legRRot = 35;
+    footLRot = 70;
+    footRRot = 70;
+  } else if (pose === 'climb') {
+    bodyRot = 12;
+    bodyBob = -2;
+    legLRot = 20;
+    legRRot = -20;
+    footLRot = 30;
+    footRRot = -30;
+  } else if (pose === 'lie') {
+    bodyRot = 85;
+    bodyBob = 20;
+    bodyOffsetX = 8;
+  } else if (pose === 'wave') {
+    handRot = Math.sin(t * Math.PI * 2 * poseDef.speed) * 35 - 50;
+    bodyRot = Math.sin(t * Math.PI * 2 * poseDef.speed) * 5;
+  } else if (pose === 'nod') {
+    headOffY = Math.abs(Math.sin(t * Math.PI * 2 * poseDef.speed)) * 4;
+    headRot = Math.sin(t * Math.PI * 2 * poseDef.speed) * 8;
+    frontHairOff = Math.sin(t * Math.PI * 2 * poseDef.speed) * 2;
+  } else if (pose === 'bounce') {
+    bodyBob = -Math.abs(Math.sin(t * Math.PI * 2 * poseDef.speed)) * 25;
+    legLRot = -25;
+    legRRot = -25;
+  } else if (pose === 'magic') {
+    staffRot = Math.sin(t * Math.PI * 2 * poseDef.speed) * 360 * 0.3;
+    staffOff = -15 - Math.abs(Math.sin(t * Math.PI * 2 * poseDef.speed)) * 10;
+    handRot = -20;
+  } else if (pose === 'attack') {
+    const t2 = t * Math.PI * 2 * poseDef.speed;
+    staffRot = -Math.sin(t2) * 60 - 30;
+    staffOff = -Math.abs(Math.sin(t2)) * 15;
+    legLRot = Math.sin(t2) * 15;
+    legRRot = Math.sin(t2 + Math.PI) * 15;
+    bodyRot = -Math.sin(t2) * 5;
+  } else {  // idle
+    bodyBob = Math.sin(t * 1.5) * 2;
+    bodyRot = Math.sin(t * 0.8) * 1.5;
+    headRot = Math.sin(t * 0.6) * 2;
+  }
+
+  // 全局 transform：画布中心 + body bob/rotate/scale
+  ctx.save();
+  ctx.translate(cx + bodyOffsetX, cy + bodyBob);
+  ctx.rotate(bodyRot * Math.PI / 180);
+  ctx.scale(1, bodyScaleY);
+
+  for (const layer of LAYERS) {
+    const img = imgs[layer.name];
+    if (!img) continue;
+
+    let rx = relX(layer.cx);
+    let ry = relY(layer.cy);
+    let rot = 0;
+
+    if (layer.kind === 'leg-l') {
+      rot = legLRot;
+      // 用腿组 pivot：(566, 1035) — legwear_l 自身 anchor
+    } else if (layer.kind === 'leg-r') {
+      rot = legRRot;
+    } else if (layer.kind === 'foot-l') {
+      // 鞋绑在腿组里：共用腿组 pivot，偏移 (-24, 61)
+      rx = relX(566 - 24);  // 542
+      ry = relY(1035 + 61); // 1096
+      rot = legLRot;
+    } else if (layer.kind === 'foot-r') {
+      // 鞋绑在腿组里：共用腿组 pivot，偏移 (4, 67)
+      rx = relX(706 + 4);   // 710
+      ry = relY(1031 + 67); // 1098
+      rot = legRRot;
+    } else if (layer.kind === 'hands') {
+      rot = handRot;
+    } else if (layer.kind === 'staff') {
+      rot = staffRot;
+      ry += staffOff;
+    } else if (layer.kind === 'hat') {
+      ry += headOffY * 5;
+    } else if (layer.kind === 'frontHair') {
+      rx += frontHairOff * 2;
+    }
+
+    // 头部层（脸+五官+耳）一起随头偏
+    const HEAD_LAYERS = ['face','ears','eyewhite','irides','eyelash','eyebrow','nose','mouth'];
+    if (HEAD_LAYERS.includes(layer.name)) {
+      ry += headOffY * 5;
+    }
+
+    drawLayer(layer, rx, ry, rot);
+  }
+
+  ctx.restore();
+
+  if (Math.floor(t * 4) % 4 === 0) {
+    document.getElementById('info').textContent = `pose: ${pose} | layers: ${LAYERS.length} | loaded: ${Object.keys(imgs).length}`;
+  }
+  requestAnimationFrame(loop);
+}
+
+document.querySelectorAll('button[data-pose]').forEach(b => {
+  b.addEventListener('click', () => {
+    pose = b.dataset.pose;
+    document.querySelectorAll('button[data-pose]').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+  });
+});
+</script>
+</body>
+</html>
