@@ -3,6 +3,7 @@
 import json
 import os
 import sqlite3
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -26,16 +27,59 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
+# ====== 连接池（thread-local） ======
+# SQLite 连接不能跨线程，所以用 threading.local 按 thread 缓存 path -> conn。
+# 同一线程多次 init_db(same_path) 复用同一连接，省去 connect 开销（毫秒级）。
+# 不同线程独立连接。close_thread() 清理当前线程缓存。
+_pool = threading.local()
+_pool_stats = {"open": 0, "reuse": 0, "close": 0}
+
+
+def _pool_stats_snapshot() -> dict:
+    """连接池统计（只读副本，供监控/测试用）。"""
+    return dict(_pool_stats)
+
+
+def close_thread() -> None:
+    """关闭当前线程缓存的所有连接（线程退出前调，避免 fd 泄漏）。
+
+    通常用 atexit 注册，或在 worker 子线程 done 时调。
+    """
+    if not hasattr(_pool, "conns"):
+        return
+    for path, conn in list(_pool.conns.items()):
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _pool_stats["close"] += 1
+    _pool.conns.clear()
+
+
+def init_db(db_path: Path | str | None = None, *, use_cache: bool = False) -> sqlite3.Connection:
     """建表（幂等）。返回连接。
 
     db_path 不传时调用时读取 MAESTRO_DB 环境变量（不冻结在导入期），
     否则用项目根默认库。
+
+    use_cache=False（默认）：每次新建连接——安全、避免 tmp_path 测试
+    inode 重用导致 stale 连接。SQLite connect 开销毫秒级，无池可接受。
+    use_cache=True：thread-local 缓存（同 path 复用同连接）—— 生产可
+    显式启用，监控用 _pool_stats_snapshot() 看 open/reuse 计数。
     """
     if db_path is None:
         db_path = os.environ.get("MAESTRO_DB", DEFAULT_DB)
-    db_path = Path(db_path)
+    db_path = Path(db_path).resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if use_cache:
+        if not hasattr(_pool, "conns"):
+            _pool.conns = {}
+        cached = _pool.conns.get(str(db_path))
+        if cached is not None:
+            _pool_stats["reuse"] += 1
+            return cached
+
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000")  # 并发连接写同一文件时等待而非立即失败
@@ -150,6 +194,9 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     _ensure_index(conn, "approvals", "approvals_task_id_idx", "(task_id)")
     _ensure_index(conn, "chat_messages", "chat_messages_conv_id_idx", "(conv_id)")
     conn.commit()
+    if use_cache:
+        _pool.conns[str(db_path)] = conn
+        _pool_stats["open"] += 1
     return conn
 
 

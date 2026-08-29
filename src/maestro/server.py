@@ -21,7 +21,7 @@ from urllib.parse import quote
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 import maestro.workers as _wmod  # 触发 worker 注册
@@ -934,16 +934,15 @@ async def ws_task(websocket: WebSocket, task_id: str):
 
 @app.get("/wallpaper")
 def wallpaper():
-    fp = WALLPAPER_DIR / "index.html"
-    if not fp.exists():
-        raise HTTPException(404, "壁纸文件不存在")
-    return FileResponse(fp)
+    # 数字人页面（wallpaper/index.html）已下线。访问 /wallpaper 重定向到 /
+    # （芙莉莲壁纸 1:1 复刻）。/wallpaper/models 与 /wallpaper/vendor 仍由下方
+    # 静态挂载提供，供 web/index.html 的芙莉莲素材与桌宠 sprite 使用。
+    return RedirectResponse(url="/", status_code=301)
 
 
-# 壁纸目录整体静态挂载：/wallpaper/frieren.html、/wallpaper/models/...、/wallpaper/vendor/...
-# 都能通过 8787 访问（Wallpaper Engine 长期使用 / 开发预览用）。
-# 注意：@app.get("/wallpaper") 精确路由在前，/wallpaper 仍返回 index.html；
-# /wallpaper/xxx 走这个挂载。
+# 壁纸目录整体静态挂载：/wallpaper/models/...、/wallpaper/vendor/...
+# 都能通过 8787 访问，供 web/index.html（芙莉莲壁纸 + 桌宠 sprite）使用。
+# /wallpaper 精确路由在前做重定向；/wallpaper/xxx 走这个挂载。
 if WALLPAPER_DIR.exists():
     app.mount("/wallpaper", StaticFiles(directory=str(WALLPAPER_DIR), html=True), name="wallpaper_static")
 
