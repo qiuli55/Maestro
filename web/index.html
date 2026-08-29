@@ -247,6 +247,44 @@
   .win-msg.typing .dot:nth-child(2){animation-delay:.15s}
   .win-msg.typing .dot:nth-child(3){animation-delay:.3s}
   @keyframes typing-bounce{0%,60%,100%{transform:translateY(0);opacity:.5}30%{transform:translateY(-4px);opacity:1}}
+  /* ===== 任务进度卡片 ===== */
+  .task-card{align-self:stretch;max-width:100%;background:#fff;border:1px solid rgba(80,90,140,.28);
+    border-radius:12px;padding:10px 12px;font-size:12px;color:#1b2237;position:relative;animation:msg-in .18s ease-out}
+  .task-card .tc-head{display:flex;align-items:center;gap:6px;font-weight:600;color:#33334f;font-size:12.5px;min-width:0}
+  .task-card .tc-prompt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .task-card .tc-status{font-size:10.5px;padding:1px 8px;border-radius:8px;font-weight:600;flex:none}
+  .task-card .tc-status.running{background:rgba(77,163,255,.15);color:#2f7fd6}
+  .task-card .tc-status.done{background:rgba(52,201,107,.15);color:#1fa855}
+  .task-card .tc-status.failed{background:rgba(239,106,106,.15);color:#d64545}
+  .task-card .tc-status.pending,.task-card .tc-status.ready,.task-card .tc-status.retry,
+  .task-card .tc-status.cancelled{background:rgba(138,148,173,.16);color:#7a7aa8}
+  .task-card .tc-meta{margin-top:3px;font-size:11px;color:#7a7aa8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .task-card .tc-bar{margin-top:6px;height:5px;border-radius:3px;background:rgba(91,107,181,.12);overflow:hidden}
+  .task-card .tc-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#5b6bb5,#4da3ff);transition:width .4s ease}
+  .task-card.done-card .tc-bar i{background:#34c96b}
+  .task-card.failed-card .tc-bar i{background:#ef6a6a}
+  .task-card .tc-toggle{margin-top:7px;border:none;background:rgba(90,105,175,.1);color:#4d5ca5;
+    font-size:10.5px;padding:2px 8px;border-radius:5px;cursor:pointer}
+  .task-card .tc-toggle:hover{background:rgba(90,105,175,.2)}
+  .task-card .tc-subs{margin-top:6px;display:none;flex-direction:column;gap:3px;
+    max-height:150px;overflow-y:auto}
+  .task-card .tc-subs.show{display:flex}
+  .task-card .tc-sub{display:flex;gap:6px;align-items:baseline;font-size:11.5px;color:#55557a;line-height:1.45}
+  .task-card .tc-sub .st{flex:none;font-weight:600;font-size:10.5px;min-width:44px}
+  .task-card .tc-sub .st.pending{color:#9a9ab8}
+  .task-card .tc-sub .st.running{color:#2f7fd6;animation:pulse 1.4s ease-in-out infinite}
+  .task-card .tc-sub .st.done{color:#1fa855}
+  .task-card .tc-sub .st.failed{color:#d64545}
+  .task-card .tc-sub .tc-err{color:#d64545;font-size:10.5px}
+  .task-card .tc-result{display:none;margin-top:8px;border-top:1px dashed rgba(80,90,140,.2);
+    padding-top:8px;font-size:12px;line-height:1.55;white-space:normal}
+  .task-card .tc-result.show{display:block}
+  .task-card .tc-result.clamped{max-height:260px;overflow:hidden;position:relative}
+  .task-card .tc-result.clamped::after{content:"";position:absolute;left:0;right:0;bottom:0;height:44px;
+    background:linear-gradient(transparent,#fff)}
+  .task-card .tc-result-toggle{margin-top:5px;border:none;background:rgba(90,105,175,.1);color:#4d5ca5;
+    font-size:10.5px;padding:2px 8px;border-radius:5px;cursor:pointer}
+  .task-card:hover .msg-ops{display:flex}
 
   /* 窗口调整大小手柄 */
   .win-resize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:se-resize}
@@ -777,6 +815,13 @@
       var op = opBtn.dataset.op;
       if (op === "copy") {
         if (navigator.clipboard) navigator.clipboard.writeText(msg.dataset.text || "").catch(function() {});
+      } else if (op === "copytask") {
+        var taskEl = opBtn.closest(".task-card");
+        var resEl2 = taskEl && taskEl.querySelector(".tc-result");
+        var txt2 = (resEl2 && resEl2.dataset.raw) || (resEl2 && resEl2.textContent) || "";
+        if (navigator.clipboard) navigator.clipboard.writeText(txt2).catch(function() {});
+        opBtn.textContent = "已复制";
+        setTimeout(function() { opBtn.textContent = "复制结果"; }, 1200);
       } else if (op === "resend") {
         var winId = winEl.dataset.id;
         if (winId && wins[winId]) doSend(winId, msg.dataset.text || "");
@@ -808,17 +853,8 @@
     if(!w)return;
     if(role==="assistant")hideTyping(id);
     var body=w.el.querySelector(".win-body");
-    var now=Date.now(),last=w._lastMsg;
-    // 时间分隔：首条消息或距上一条 >10 分钟
-    if(!last||now-last.t>600000){
-      var dv=document.createElement("div");
-      dv.className="msg-divider";
-      var d=new Date();
-      var sameDay=last&&new Date(last.t).toDateString()===d.toDateString();
-      dv.textContent=(sameDay?"":(d.getMonth()+1)+"-"+d.getDate()+" ")+
-        ("00"+d.getHours()).slice(-2)+":"+("00"+d.getMinutes()).slice(-2);
-      body.appendChild(dv);
-    }
+    var now=maybeAppendDivider(w,body);
+    var last=w._lastMsg;
     var cont=last&&last.role===role&&(now-last.t)<120000;
     var div=buildMsgEl(role,text,cont);
     body.appendChild(div);
@@ -832,6 +868,114 @@
         titleEl.textContent="⚙ "+titleEl.textContent;
       }
     }
+  }
+
+  // ========== 任务进度卡片 ==========
+  var TC_STATUS={pending:"待拆分",ready:"待确认",running:"运行中",done:"已完成",
+                 failed:"已失败",retry:"重试中",cancelled:"已取消"};
+
+  // 首条消息或距上一条 >10 分钟时插时间分隔线，返回当前时间戳
+  function maybeAppendDivider(w,body){
+    var now=Date.now(),last=w._lastMsg;
+    if(!last||now-last.t>600000){
+      var dv=document.createElement("div");
+      dv.className="msg-divider";
+      var d=new Date();
+      var sameDay=last&&new Date(last.t).toDateString()===d.toDateString();
+      dv.textContent=(sameDay?"":(d.getMonth()+1)+"-"+d.getDate()+" ")+
+        ("00"+d.getHours()).slice(-2)+":"+("00"+d.getMinutes()).slice(-2);
+      body.appendChild(dv);
+    }
+    return now;
+  }
+
+  // 任务提交 → 富卡片（状态/进度条/子任务实时状态/结果区），自带 2s 轮询到终态
+  function winAppendTaskCard(id,taskId,agents,model,prompt){
+    var w=wins[id];
+    if(!w)return;
+    hideTyping(id);
+    var body=w.el.querySelector(".win-body");
+    var now=maybeAppendDivider(w,body);
+    var card=document.createElement("div");
+    card.className="task-card";
+    card.dataset.task=taskId;
+    card.innerHTML=
+      '<div class="tc-head"><span class="tc-status pending">待拆分</span>'+
+        '<span class="tc-prompt">'+escapeHtml((prompt||"").slice(0,50))+'</span></div>'+
+      '<div class="tc-meta">'+escapeHtml(agents.join(" + "))+(model?" · "+escapeHtml(model):"")+" · "+escapeHtml(taskId)+'</div>'+
+      '<div class="tc-bar"><i></i></div>'+
+      '<button type="button" class="tc-toggle" style="display:none">子任务</button>'+
+      '<div class="tc-subs"></div>'+
+      '<div class="tc-result"></div>';
+    var ops=document.createElement("div");
+    ops.className="msg-ops";
+    ops.innerHTML='<button type="button" data-op="copytask" title="复制结果">复制结果</button>';
+    card.appendChild(ops);
+    body.appendChild(card);
+    body.scrollTop=body.scrollHeight;
+    w._lastMsg={t:now,role:"assistant"};
+    var titleEl=w.el.querySelector(".win-title");
+    if(titleEl&&!titleEl.textContent.includes("⚙")){
+      titleEl.textContent="⚙ "+titleEl.textContent;
+    }
+    pollTaskCard(id,taskId);
+  }
+
+  function pollTaskCard(convId,taskId){
+    fetch(MAESTRO+"/api/tasks/"+taskId,{cache:"no-store"})
+      .then(function(r){return r.json()})
+      .then(function(snap){
+        if(!snap||!snap.task)return;
+        var w=wins[convId];
+        var card=w&&w.el.querySelector('.task-card[data-task="'+taskId+'"]');
+        if(!card)return; // 窗口已关闭：停止轮询
+        var t=snap.task;
+        var chip=card.querySelector(".tc-status");
+        chip.textContent=TC_STATUS[t.status]||t.status;
+        chip.className="tc-status "+t.status;
+        card.classList.toggle("done-card",t.status==="done");
+        card.classList.toggle("failed-card",t.status==="failed");
+        var subs=snap.subtasks||[];
+        if(subs.length){
+          var finN=subs.filter(function(s){return s.status==="done"||s.status==="failed"||s.status==="cancelled"}).length;
+          card.querySelector(".tc-bar i").style.width=Math.round(finN/subs.length*100)+"%";
+          var doneN=subs.filter(function(s){return s.status==="done"}).length;
+          var subsEl=card.querySelector(".tc-subs");
+          subsEl.innerHTML=subs.map(function(s){
+            var err=s.error?' <span class="tc-err">'+escapeHtml(String(s.error).slice(0,60))+"</span>":"";
+            return '<div class="tc-sub"><span class="st '+s.status+'">'+(TC_STATUS[s.status]||s.status)+
+              '</span><span>'+escapeHtml((s.desc||"").slice(0,42))+err+"</span></div>";
+          }).join("");
+          var tg=card.querySelector(".tc-toggle");
+          tg.style.display="";
+          tg.textContent="子任务 "+doneN+"/"+subs.length;
+        }
+        if(t.status==="done"||t.status==="failed"){
+          // 终态：展示结果（Markdown），过长的结果折叠
+          var resEl=card.querySelector(".tc-result");
+          var txt=(t.result||"").trim();
+          if(!txt&&t.status==="failed")txt="任务失败："+(t.error||"未知错误");
+          if(txt){
+            resEl.classList.add("show");
+            resEl.dataset.raw=txt;
+            resEl.innerHTML=mdRender(txt);
+            if(txt.length>MD_FOLD_LEN){
+              resEl.classList.add("clamped");
+              var rb=document.createElement("button");
+              rb.type="button";rb.className="tc-result-toggle";rb.textContent="展开全文";
+              rb.addEventListener("click",function(){
+                resEl.classList.toggle("clamped");
+                rb.textContent=resEl.classList.contains("clamped")?"展开全文":"收起";
+              });
+              card.appendChild(rb);
+            }
+          }
+          poll(); // 刷新顶部编排器面板
+          return; // 终态：停止轮询
+        }
+        setTimeout(function(){pollTaskCard(convId,taskId)},2000);
+      })
+      .catch(function(){setTimeout(function(){pollTaskCard(convId,taskId)},4000)});
   }
 
   // 窗口拖动
@@ -1373,24 +1517,13 @@
         .then(function(d){
           var taskId=d.task_id;
           var agents=d.selected_workers&&d.selected_workers.length>0?d.selected_workers:["embedded"];
-          var modelInfo=d.model?" [模型："+d.model+"]":"";
-          winAppendMsg(targetId,"assistant","任务已提交 → "+agents.join(" + ")+modelInfo+"\nID："+(taskId||"完成"));
-          poll(); // 刷新任务列表
-          // 轮询任务状态直到完成
-          function waitTask(){
-            fetch(MAESTRO+"/api/tasks/"+taskId,{cache:"no-store"})
-              .then(function(r){return r.json()})
-              .then(function(t){
-                if(t.status==="running"||t.status==="pending"){
-                  setTimeout(waitTask,2000);
-                }else{
-                  // 任务完成，显示结果
-                  var result=t.result||t.error||"任务完成";
-                  winAppendMsg(targetId,"assistant","【任务完成】"+result);
-                }
-              });
+          if(taskId){
+            // 富任务卡片：状态/进度/子任务/结果自带轮询
+            winAppendTaskCard(targetId,taskId,agents,d.model||null,v);
+          }else{
+            winAppendMsg(targetId,"assistant","任务提交异常："+(d.error||"无 task_id"));
           }
-          if(taskId)waitTask();
+          poll(); // 刷新任务列表
         })
         .catch(function(){winAppendMsg(targetId,"assistant","任务提交失败");});
     }
