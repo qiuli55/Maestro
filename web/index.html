@@ -41,7 +41,7 @@
   .dock-tabs{display:flex;gap:3px;background:rgba(245,247,255,.82);border:1px solid rgba(80,90,140,.3);border-radius:10px;padding:3px}
   .dock-tab{font-size:12px;color:#55557a;padding:4px 15px;border-radius:7px;cursor:pointer;user-select:none;transition:all .15s}
   .dock-tab.active{background:#5b6bb5;color:#fff}
-  .dock-row{display:flex;gap:8px;align-items:center;background:rgba(245,247,255,.9);border:1px solid rgba(80,90,140,.3);border-radius:12px;padding:8px 11px;box-shadow:0 4px 18px rgba(40,50,100,.25);backdrop-filter:blur(5px);flex-wrap:wrap}
+  .dock-row{display:flex;gap:8px;align-items:flex-end;background:rgba(245,247,255,.9);border:1px solid rgba(80,90,140,.3);border-radius:12px;padding:8px 11px;box-shadow:0 4px 18px rgba(40,50,100,.25);backdrop-filter:blur(5px);flex-wrap:wrap}
   /* ===== 多 agent 选择器 ===== */
   .agent-selector{
     display:none;flex-direction:column;gap:5px;
@@ -83,7 +83,8 @@
   }
   #model-select:focus{border-color:#5b6bb5}
   #model-select option{padding:2px}
-  #dock-input{width:340px;border:none;outline:none;background:transparent;font-size:14px;color:#1b2237;font-family:inherit}
+  #dock-input{width:340px;border:none;outline:none;background:transparent;font-size:14px;color:#1b2237;font-family:inherit;
+    resize:none;max-height:110px;line-height:1.45;padding:7px 0;overflow-y:auto}
   #dock-input::placeholder{color:#9a9ab8}
   #dock-send{border:none;background:#5b6bb5;color:#fff;font-size:13px;padding:7px 16px;border-radius:8px;cursor:pointer;font-family:inherit}
   #dock-send:hover{background:#4d5ca5}
@@ -182,228 +183,70 @@
     cursor:pointer;font-family:inherit
   }
   .win-send:hover{background:#4d5ca5}
-  /* 窗口内的消息 */
-  .win-msg{max-width:82%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.5;
-    white-space:pre-wrap;word-break:break-word}
+  /* ===== 窗口内消息（头像 / Markdown / 操作按钮 / 入场动画） ===== */
+  .win-msg{max-width:86%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.55;
+    white-space:pre-wrap;word-break:break-word;position:relative;animation:msg-in .18s ease-out}
   .win-msg.user{align-self:flex-end;background:#5b6bb5;color:#fff;border-bottom-right-radius:4px}
-  .win-msg.assistant{align-self:flex-start;background:#eceefc;color:#1b2237;border-bottom-left-radius:4px}
-  .win-msg .caret{display:inline-block;animation:caretblink .8s step-end infinite;color:#5b6bb5;font-weight:700}
-  .win-time{font-size:10px;color:#a8a8c5;margin-top:3px;text-align:right}
-  .win-msg.user .win-time{text-align:right;color:rgba(255,255,255,.7)}
-  .win-msg.assistant .win-time{text-align:left;color:#9a9ab8}
-
-  /* ===== 精细桌宠（趴在最新气泡上，walk/run/jump/lift/sit/climb/lie 7 姿态） ===== */
-  .win-msg.assistant{position:relative}
-  .win-pet{
-    position:absolute;top:-52px;left:6px;
-    width:64px;height:80px;pointer-events:auto;
-    z-index:10;opacity:0;
-    transition:opacity .3s ease;
-    filter:drop-shadow(0 3px 8px rgba(91,70,120,.4));
-  }
-  .win-msg.assistant.has-pet .win-pet{opacity:1}
-  /* 桌宠容器 */
-  .win-pet-body{
-    position:relative;width:100%;height:100%;
-    display:flex;align-items:flex-end;justify-content:center;
-    transform-origin:center bottom;
-  }
-  /* 7 张姿势图堆叠，绝对定位同位置 */
-  .win-pet-img{
-    position:absolute;left:0;right:0;bottom:0;
-    width:100%;height:auto;max-height:78px;
-    object-fit:contain;object-position:center bottom;
-    opacity:0;transition:opacity .35s ease;
-    transform-origin:center bottom;
-    pointer-events:none;
-  }
-  .win-pet-img.active{opacity:1}
-
-  /* ===== walk：左右轻移 ===== */
-  .win-pet[data-pose="walk"] .win-pet-img.active{
-    animation:pet-walk-step 1.2s ease-in-out infinite;
-  }
-  @keyframes pet-walk-step{
-    0%,100%{transform:translateX(-2px) translateY(0)}
-    50%{transform:translateX(2px) translateY(-1px)}
-  }
-  /* ===== run：大幅左右 + 上下颠簸 ===== */
-  .win-pet[data-pose="run"] .win-pet-img.active{
-    animation:pet-run-bounce .55s ease-in-out infinite;
-  }
-  @keyframes pet-run-bounce{
-    0%,100%{transform:translateX(-4px) translateY(0)}
-    25%{transform:translateY(-3px)}
-    50%{transform:translateX(4px) translateY(0)}
-    75%{transform:translateY(-3px)}
-  }
-  /* ===== jump：原地跳 ===== */
-  .win-pet[data-pose="jump"] .win-pet-img.active{
-    animation:pet-jump-bounce .6s ease-in-out infinite;
-  }
-  @keyframes pet-jump-bounce{
-    0%,100%{transform:translateY(0) scaleY(1)}
-    30%{transform:translateY(-12px) scaleY(1.05)}
-    60%{transform:translateY(-4px) scaleY(.95)}
-  }
-  /* ===== lift：举东西（左右摆动） ===== */
-  .win-pet[data-pose="lift"] .win-pet-img.active{
-    animation:pet-lift-swing 1.6s ease-in-out infinite;
-  }
-  @keyframes pet-lift-swing{
-    0%,100%{transform:rotate(-4deg) scale(1)}
-    50%{transform:rotate(4deg) scale(1.04)}
-  }
-  /* ===== sit：身体微晃 + 脑袋轻点 ===== */
-  .win-pet[data-pose="sit"] .win-pet-img.active{
-    animation:pet-sit-bob 3.5s ease-in-out infinite;
-  }
-  @keyframes pet-sit-bob{
-    0%,100%{transform:translateY(0) scaleY(1)}
-    40%{transform:translateY(-2px) scaleY(1.02)}
-    70%{transform:translateY(1px) scaleY(.98)}
-  }
-  /* ===== climb：上下抖 ===== */
-  .win-pet[data-pose="climb"] .win-pet-img.active{
-    animation:pet-climb-shake .9s ease-in-out infinite;
-  }
-  @keyframes pet-climb-shake{
-    0%,100%{transform:translateY(0) rotate(0deg)}
-    25%{transform:translateY(-3px) rotate(2deg)}
-    50%{transform:translateY(-5px) rotate(0deg)}
-    75%{transform:translateY(-3px) rotate(-2deg)}
-  }
-  /* ===== lie：懒散翻身 ===== */
-  .win-pet[data-pose="lie"] .win-pet-img.active{
-    animation:pet-lie-breath 5s ease-in-out infinite;
-  }
-  @keyframes pet-lie-breath{
-    0%,100%{transform:scaleY(1) translateY(0)}
-    50%{transform:scaleY(1.05) translateY(-1px)}
-  }
-
-  /* 发消息时的反应动画：跳到气泡上 */
-  @keyframes pet-jump-to-bubble{
-    0%{transform:translateX(0) translateY(0) scale(1)}
-    20%{transform:translateX(-3px) translateY(-26px) scale(1.05)}
-    50%{transform:translateX(2px) translateY(-22px) scale(1.03)}
-    80%{transform:translateX(-1px) translateY(-8px) scale(1.01)}
-    100%{transform:translateX(0) translateY(0) scale(1)}
-  }
-  .win-pet.reacting .win-pet-img.active{animation:pet-jump-to-bubble .55s cubic-bezier(.36,.07,.19,.97) forwards!important}
-
-  /* ===== 桌宠 v3：三视图转身（front/side/back，scaleX 模拟水平旋转） ===== */
-  .win-pet{display:none} /* 隐藏旧 img 系统 */
-  .win-pet-rig{
-    position:absolute;left:-12px;bottom:-10px;width:96px;height:128px;
-    pointer-events:none;opacity:0;transition:opacity .3s ease;
-    filter:drop-shadow(0 3px 8px rgba(91,70,120,.4));
-    transform-origin:center bottom;
-    perspective:200px;
-    z-index:10;/* 始终盖在消息气泡之上 */
-  }
-  /* 实际显示尺寸（rig 内容 96x128，适配 chat window） */
-  .win-pet-rig{width:96px;height:128px}
-  .win-msg.assistant.has-pet .win-pet-rig{opacity:1}
-  /* 3 张视图叠放：back 在最底，front 在最顶 */
-  .rig-view{
-    position:absolute;left:0;top:0;width:100%;height:100%;
-    object-fit:contain;
-    pointer-events:none;
-    will-change:transform,opacity;
-    transition:opacity .15s ease;
-    transform-origin:50% 80%;
-  }
-  .rig-view-front{opacity:1;z-index:3}
-  .rig-view-side{opacity:0;z-index:2}
-  .rig-view-back{opacity:0;z-index:1}
-  /* front 容器含身体+两条腿 */
-  .rig-front-group{position:absolute;left:0;top:0;width:100%;height:100%;z-index:3}
-  .rig-view-body{left:18.09px;top:6.56px;width:54.00px;height:70.31px;object-fit:fill!important}
-  .rig-view-leg-l{left:29.25px;top:76.88px;width:17.06px;height:12.38px;z-index:4;transform-origin:50% 0%;will-change:transform;object-fit:fill!important}
-  .rig-view-leg-r{left:46.78px;top:76.88px;width:17.81px;height:12.66px;z-index:4;transform-origin:50% 0%;will-change:transform;object-fit:fill!important}
-  .rig-front-group .rig-view-body,
-  .rig-front-group .rig-view-leg-l,
-  .rig-front-group .rig-view-leg-r{position:absolute;display:block;pointer-events:none;object-fit:fill}
-  /* 默认隐藏腿：仅 walk/run 显示 */
-  .rig-view-leg-l,.rig-view-leg-r{opacity:0}
-  .win-pet-rig[data-pose="walk"] .rig-view-leg-l,
-  .win-pet-rig[data-pose="walk"] .rig-view-leg-r,
-  .win-pet-rig[data-pose="run"] .rig-view-leg-l,
-  .win-pet-rig[data-pose="run"] .rig-view-leg-r{opacity:1}
-
-  /* ===== idle: 整体呼吸 + 微摆 ===== */
-  .win-pet-rig[data-pose="idle"] .rig-view-front{animation:r-q-breath 3s ease-in-out infinite}
-  .win-pet-rig[data-pose="idle"] .rig-view-side{animation:r-q-breath 3s ease-in-out infinite}
-  .win-pet-rig[data-pose="idle"] .rig-view-back{animation:r-q-breath 3s ease-in-out infinite}
-  @keyframes r-q-breath{0%,100%{transform:translateY(0) scaleY(1)}50%{transform:translateY(-1.5px) scaleY(1.015)}}
-
-  /* ===== walk: 上下颠 + 左右轮替 + 两条腿交替向前迈 ===== */
-  .win-pet-rig[data-pose="walk"] .rig-front-group{animation:r-q-walk .5s steps(2,end) infinite}
-  @keyframes r-q-walk{
-    0%  {transform:translateY(0) rotate(-1deg)}
-    25% {transform:translateY(-5px) rotate(-1deg)}
-    50% {transform:translateY(0) rotate(1deg)}
-    75% {transform:translateY(-5px) rotate(1deg)}
-    100%{transform:translateY(0) rotate(-1deg)}
-  }
-  /* 左腿（仅靴子）：左脚迈前时 translateX(-3px) translateY(-2px) rotate(-25deg) */
-  .win-pet-rig[data-pose="walk"] .rig-view-leg-l{animation:r-q-leg-l .5s steps(2,end) infinite}
-  @keyframes r-q-leg-l{
-    0%  {transform:translate(0,0) rotate(0)}
-    50% {transform:translate(-3px,-2px) rotate(-25deg)}
-    100%{transform:translate(0,0) rotate(0)}
-  }
-  /* 右腿：与左腿反向 */
-  .win-pet-rig[data-pose="walk"] .rig-view-leg-r{animation:r-q-leg-r .5s steps(2,end) infinite}
-  @keyframes r-q-leg-r{
-    0%  {transform:translate(0,0) rotate(0)}
-    50% {transform:translate(3px,-2px) rotate(25deg)}
-    100%{transform:translate(0,0) rotate(0)}
-  }
-
-  /* ===== run: 更快节奏 + 大幅腿摆 ===== */
-  .win-pet-rig[data-pose="run"] .rig-front-group{animation:r-q-run .3s steps(2,end) infinite}
-  @keyframes r-q-run{
-    0%  {transform:translateY(0) rotate(-3deg)}
-    25% {transform:translateY(-7px) rotate(-3deg)}
-    50% {transform:translateY(0) rotate(3deg)}
-    75% {transform:translateY(-7px) rotate(3deg)}
-    100%{transform:translateY(0) rotate(-3deg)}
-  }
-  .win-pet-rig[data-pose="run"] .rig-view-leg-l{animation:r-q-run-leg-l .3s steps(2,end) infinite}
-  @keyframes r-q-run-leg-l{
-    0%  {transform:translate(0,0) rotate(0)}
-    50% {transform:translate(-4px,-2px) rotate(-25deg)}
-    100%{transform:translate(0,0) rotate(0)}
-  }
-  .win-pet-rig[data-pose="run"] .rig-view-leg-r{animation:r-q-run-leg-r .3s steps(2,end) infinite}
-  @keyframes r-q-run-leg-r{
-    0%  {transform:translate(0,0) rotate(0)}
-    50% {transform:translate(4px,-2px) rotate(25deg)}
-    100%{transform:translate(0,0) rotate(0)}
-  }
-
-  /* ===== run: 更快颠簸 + 前倾 ===== */
-  .win-pet-rig[data-pose="run"] .rig-view{animation:r-q-run .3s ease-in-out infinite}
-  @keyframes r-q-run{0%,100%{transform:translateY(0) rotate(-3deg)}50%{transform:translateY(-4px) rotate(-3deg)}}
-
-  /* ===== jump: 上下跳 ===== */
-  .win-pet-rig[data-pose="jump"] .rig-view{animation:r-q-jump .6s ease-in-out infinite}
-  @keyframes r-q-jump{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
-
-  /* ===== lift: 上举 ===== */
-  .win-pet-rig[data-pose="lift"] .rig-view{animation:r-q-lift 1.2s ease-in-out infinite}
-  @keyframes r-q-lift{0%,100%{transform:translateY(-3px)}50%{transform:translateY(-5px)}}
-
-  /* ===== sit: 整体下蹲（缩小） ===== */
-  .win-pet-rig[data-pose="sit"] .rig-view{transform:translateY(6px) scaleY(.94);transform-origin:50% 100%}
-
-  /* ===== climb: 倾斜 ===== */
-  .win-pet-rig[data-pose="climb"] .rig-view{transform:rotate(12deg) translateY(-2px)}
-
-  /* ===== lie: 整体躺平 ===== */
-  .win-pet-rig[data-pose="lie"] .rig-view{transform:rotate(85deg) translateX(8px) translateY(20px)}
+  .win-msg.assistant{align-self:flex-start;background:#eceefc;color:#1b2237;border-bottom-left-radius:4px;margin-left:26px}
+  .win-msg.md-msg{white-space:normal}
+  .win-msg.cont{margin-top:-4px}
+  .win-msg.assistant.cont{margin-top:-6px}
+  @keyframes msg-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .win-msg .caret{display:inline-block;width:2px;height:13px;background:#5b6bb5;vertical-align:-2px;
+    animation:caretblink .8s step-end infinite;margin-left:2px}
+  .msg-meta{display:flex;align-items:center;gap:6px;margin-top:3px}
+  .win-msg.user .msg-meta{justify-content:flex-end}
+  .win-time{font-size:10px;color:#a8a8c5}
+  .win-msg.user .win-time{color:rgba(255,255,255,.7)}
+  .win-msg.assistant .win-time{color:#9a9ab8}
+  /* 助手头像 */
+  .msg-avatar{position:absolute;left:-26px;bottom:4px;width:20px;height:20px;border-radius:50%;
+    border:1.5px solid rgba(91,107,181,.35);background:#fff;object-fit:cover}
+  /* 时间分隔线 */
+  .msg-divider{align-self:center;font-size:10px;color:#9a9ab8;background:rgba(148,155,195,.14);
+    padding:2px 10px;border-radius:8px;margin:6px 0 2px}
+  /* 悬停操作条 */
+  .msg-ops{position:absolute;top:-11px;right:6px;display:none;gap:1px;background:#fff;
+    border:1px solid rgba(80,90,140,.25);border-radius:6px;padding:1px;box-shadow:0 2px 8px rgba(40,50,100,.18);z-index:5}
+  .win-msg:hover .msg-ops{display:flex}
+  .msg-ops button{border:none;background:transparent;font-size:11px;color:#4d5ca5;padding:2px 6px;
+    border-radius:4px;cursor:pointer;line-height:1.4}
+  .msg-ops button:hover{background:rgba(90,105,175,.12)}
+  /* Markdown */
+  .md-msg .msg-content p{margin:0 0 6px}
+  .md-msg .msg-content p:last-of-type{margin-bottom:0}
+  .md-msg .msg-content h1,.md-msg .msg-content h2,.md-msg .msg-content h3,.md-msg .msg-content h4{
+    margin:8px 0 4px;font-size:13.5px;color:#33334f}
+  .md-msg .msg-content h1{font-size:15px}
+  .md-msg .msg-content h2{font-size:14px}
+  .md-msg .msg-content ul,.md-msg .msg-content ol{margin:2px 0 6px;padding-left:18px}
+  .md-msg .msg-content li{margin:2px 0}
+  .md-msg .msg-content blockquote{margin:4px 0;padding:4px 10px;border-left:3px solid rgba(91,107,181,.4);
+    background:rgba(91,107,181,.06);border-radius:4px;color:#55557a}
+  .md-msg .msg-content a{color:#4d5ca5}
+  .md-inline{background:rgba(91,107,181,.1);padding:0 4px;border-radius:4px;
+    font-family:Consolas,monospace;font-size:12px}
+  .md-code{margin:6px 0;border:1px solid rgba(80,90,140,.25);border-radius:8px;overflow:hidden;background:#282c40}
+  .md-code-bar{display:flex;justify-content:space-between;align-items:center;padding:3px 10px;
+    background:rgba(255,255,255,.06);font-size:10.5px;color:#aab2d8}
+  .md-code-copy{border:none;background:rgba(255,255,255,.08);color:#c6cdf2;font-size:10.5px;
+    padding:2px 8px;border-radius:5px;cursor:pointer}
+  .md-code-copy:hover{background:rgba(255,255,255,.16)}
+  .md-code pre{margin:0;padding:10px 12px;overflow-x:auto}
+  .md-code code{font-family:Consolas,"Courier New",monospace;font-size:12px;color:#dce2ff;line-height:1.5}
+  /* 长回复折叠 */
+  .win-msg.folded .msg-content{max-height:180px;overflow:hidden;position:relative}
+  .win-msg.folded .msg-content::after{content:"";position:absolute;left:0;right:0;bottom:0;height:44px;
+    background:linear-gradient(transparent,#eceefc)}
+  .md-fold-btn{border:none;background:rgba(90,105,175,.12);color:#4d5ca5;font-size:10.5px;
+    padding:2px 8px;border-radius:5px;cursor:pointer}
+  /* 打字指示（芙莉莲正在输入） */
+  .win-msg.typing .msg-content{display:flex;gap:4px;align-items:center;padding:3px 0}
+  .win-msg.typing .dot{width:6px;height:6px;border-radius:50%;background:#8a94c8;
+    animation:typing-bounce 1.2s ease-in-out infinite}
+  .win-msg.typing .dot:nth-child(2){animation-delay:.15s}
+  .win-msg.typing .dot:nth-child(3){animation-delay:.3s}
+  @keyframes typing-bounce{0%,60%,100%{transform:translateY(0);opacity:.5}30%{transform:translateY(-4px);opacity:1}}
 
   /* 窗口调整大小手柄 */
   .win-resize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:se-resize}
@@ -549,7 +392,7 @@
         <select id="model-select"></select>
       </div>
     </div>
-    <input id="dock-input" placeholder="输入消息…" style="width:240px" />
+    <textarea id="dock-input" rows="1" placeholder="输入消息…"></textarea>
     <button id="dock-send">发送</button>
     <span class="conv-wrap">
       <button id="history-btn" title="查看历史对话">历史</button>
@@ -595,28 +438,7 @@
           '<button class="win-btn close" data-win="close" title="关闭">×</button>'+
         '</div>'+
       '</div>'+
-      '<div class="win-body" id="win-body-'+id+'">'+
-        '<div class="win-pet" data-pose="walk">'+
-          '<div class="win-pet-body">'+
-            '<img class="win-pet-img" src="pet_poses/pet_walk_clean.png"  data-pose="walk"  alt="walk">'+
-            '<img class="win-pet-img" src="pet_poses/pet_run_clean.png"   data-pose="run"   alt="run">'+
-            '<img class="win-pet-img" src="pet_poses/pet_jump_clean.png"  data-pose="jump"  alt="jump">'+
-            '<img class="win-pet-img" src="pet_poses/pet_lift_clean.png"  data-pose="lift"  alt="lift">'+
-            '<img class="win-pet-img" src="pet_poses/pet_sit_clean.png"   data-pose="sit"   alt="sit">'+
-            '<img class="win-pet-img" src="pet_poses/pet_climb_clean.png" data-pose="climb" alt="climb">'+
-            '<img class="win-pet-img" src="pet_poses/pet_lie_clean.png"   data-pose="lie"   alt="lie">'+
-          '</div>'+
-        '</div>'+
-        '<div class="win-pet-rig" data-pose="idle" data-facing="0">'+
-          '<img class="rig-view rig-view-back"  src="pet_q/back.png"  alt="back">'+
-          '<img class="rig-view rig-view-side"  src="pet_q/side.png"  alt="side">'+
-          '<div class="rig-front-group">'+
-            '<img class="rig-view rig-view-body" src="pet_q/body_upper.png" alt="body">'+
-            '<img class="rig-view rig-view-leg-r" src="pet_q/leg_right.png" alt="leg-r">'+
-            '<img class="rig-view rig-view-leg-l" src="pet_q/leg_left.png" alt="leg-l">'+
-          '</div>'+
-        '</div>'+
-      '</div>'+
+      '<div class="win-body" id="win-body-'+id+'"></div>'+
       '<div class="win-resize" data-win="resize"></div>'+
     '</div>';
   }
@@ -644,10 +466,6 @@
       });
     });
     wins[id]={el:el,data:{id:id,title:title,kind:kind},minimized:false};
-    setPetPose(wins[id],"idle"); // 初始化桌宠为 idle
-    startPetBlink(wins[id]);
-    // 初始化朝向：朝用户（面向）
-    setPetFacing(wins[id],0);
     winActivate(id);
     winTabsRender();
     return wins[id];
@@ -775,7 +593,6 @@
     var w=wins[id];
     if(!w)return;
     removeWinMini(id); // 移除小卡片
-    stopPetBlink(w);   // 停止桌宠眨眼定时器
     w.el.remove();
     delete wins[id];
     if(activeWinId===id){
@@ -838,203 +655,183 @@
   // 页面加载完成后恢复窗口
   setTimeout(restoreWindows,500);
 
-  // ========== 全局鼠标监听：让所有窗口的桌宠跟随鼠标转向 ==========
-  // 每个窗口的桌宠根据"鼠标相对该窗口中心的位置"决定朝向
-  document.addEventListener("mousemove",function(e){
-    var mx=e.clientX;
-    Object.keys(wins).forEach(function(id){
-      var w=wins[id];if(!w||w.minimized)return;
-      var rect=w.el.getBoundingClientRect();
-      // 窗口中心相对位置（-1 左 ~ 1 右）
-      var cx=rect.left+rect.width/2;
-      var nx=(mx-cx)/(rect.width/2); // -1~+1
-      // 鼠标在窗口内时角色面朝鼠标方向（angle 越大 = 鼠标越靠右 = 角色越转向）
-      setPetFacing(w,nx);
+  // ========== 消息渲染引擎：Markdown / 头像 / 时间分隔 / 操作按钮 ==========
+  var MD_FOLD_LEN = 1400;          // 超过该长度折叠"展开全文"
+  var AVATAR_HTML = '<img class="msg-avatar" src="pet_frieren_q.png" alt="">';
+
+  // 行内 Markdown（先转义再替换，天然防注入）
+  function mdInline(raw) {
+    var s = escapeHtml(raw);
+    s = s.replace(/`([^`]+)`/g, function(_, c) { return '<code class="md-inline">' + c + '</code>'; });
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+    s = s.replace(/~~([^~]+)~~/g, "<s>$1</s>");
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    return s.replace(/\n/g, "<br>");
+  }
+
+  function mdCodeBlock(c) {
+    return '<div class="md-code"><div class="md-code-bar"><span>' + escapeHtml(c.lang || "代码") + '</span>' +
+      '<button type="button" class="md-code-copy">复制代码</button></div>' +
+      '<pre><code>' + escapeHtml(c.code) + '</code></pre></div>';
+  }
+
+  // 块级 Markdown：围栏代码 / 标题 / 列表 / 引用 / 分隔线 / 段落
+  function mdRender(src) {
+    src = String(src || "").replace(/\r\n/g, "\n").trim();
+    if (!src) return "";
+    var codes = [];
+    src = src.replace(/```([\w+#.-]*)[ \t]*\n?([\s\S]*?)```/g, function(_, lang, code) {
+      codes.push({ lang: lang, code: code.replace(/\n$/, "") });
+      return "\x00C" + (codes.length - 1) + "\x00";
     });
+    var lines = src.split("\n"), out = [], list = null, quote = false, para = [];
+    function flushPara() { if (para.length) { out.push("<p>" + mdInline(para.join("\n")) + "</p>"); para = []; } }
+    function closeList() { if (list) { out.push(list === "ul" ? "</ul>" : "</ol>"); list = null; } }
+    function closeQuote() { if (quote) { out.push("</blockquote>"); quote = false; } }
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i];
+      var cm = ln.match(/^\x00C(\d+)\x00\s*$/);
+      if (cm) { flushPara(); closeList(); closeQuote(); out.push(mdCodeBlock(codes[+cm[1]])); continue; }
+      if (!ln.trim()) { flushPara(); closeList(); closeQuote(); continue; }
+      var h = ln.match(/^(#{1,4})\s+(.*)$/);
+      if (h) { flushPara(); closeList(); closeQuote(); out.push("<h" + h[1].length + ">" + mdInline(h[2]) + "</h" + h[1].length + ">"); continue; }
+      if (/^(-{3,}|\*{3,}|_{3,})$/.test(ln.trim())) { flushPara(); closeList(); closeQuote(); out.push("<hr>"); continue; }
+      var q = ln.match(/^>\s?(.*)$/);
+      if (q) { flushPara(); closeList(); if (!quote) { out.push("<blockquote>"); quote = true; } out.push("<p>" + mdInline(q[1]) + "</p>"); continue; }
+      closeQuote();
+      var ul = ln.match(/^\s*[-*+]\s+(.*)$/);
+      var ol = ln.match(/^\s*\d+[.、)]\s+(.*)$/);
+      if (ul || ol) {
+        flushPara();
+        var tag = ul ? "ul" : "ol";
+        if (list !== tag) { closeList(); out.push("<" + tag + ">"); list = tag; }
+        out.push("<li>" + mdInline((ul || ol)[1]) + "</li>");
+        continue;
+      }
+      closeList();
+      para.push(ln);
+    }
+    flushPara(); closeList(); closeQuote();
+    return out.join("").replace(/\x00C(\d+)\x00/g, function(_, n) { return mdCodeBlock(codes[+n]); });
+  }
+
+  // 长回复折叠：>MD_FOLD_LEN 时收起并给"展开全文"按钮
+  function applyFold(div, text) {
+    if (text.length <= MD_FOLD_LEN || div.classList.contains("folded") || div.querySelector(".md-fold-btn")) return;
+    div.classList.add("folded");
+    var meta = div.querySelector(".msg-meta");
+    if (meta) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "md-fold-btn";
+      b.textContent = "展开全文";
+      meta.appendChild(b);
+    }
+  }
+
+  // 消息 DOM 构造（头像/操作条/时间分隔/连续合并）
+  function buildMsgEl(role, text, cont) {
+    var div = document.createElement("div");
+    div.className = "win-msg " + role + (cont ? " cont" : "") + (role === "assistant" ? " md-msg" : "");
+    div.dataset.text = text;
+    var contentHtml = role === "assistant" ? mdRender(text) : escapeHtml(text);
+    div.innerHTML = (role === "assistant" ? AVATAR_HTML : "") +
+      '<div class="msg-content">' + contentHtml + '</div>' +
+      '<div class="msg-meta"><span class="win-time">' + new Date().toLocaleTimeString() + '</span></div>';
+    var ops = document.createElement("div");
+    ops.className = "msg-ops";
+    ops.innerHTML = '<button type="button" data-op="copy" title="复制">复制</button>' +
+      (role === "user" ? '<button type="button" data-op="resend" title="重新发送">重发</button>'
+                       : '<button type="button" data-op="quote" title="引用到输入框">引用</button>');
+    div.appendChild(ops);
+    return div;
+  }
+
+  // 打字指示（芙莉莲正在输入…）
+  function showTyping(id) {
+    var w = wins[id];
+    if (!w) return;
+    hideTyping(id);
+    var body = w.el.querySelector(".win-body");
+    var div = document.createElement("div");
+    div.className = "win-msg assistant typing" + (w._lastMsg && w._lastMsg.role === "assistant" ? " cont" : "");
+    div.innerHTML = AVATAR_HTML + '<div class="msg-content"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';
+    body.appendChild(div);
+    body.scrollTop = body.scrollHeight;
+  }
+  function hideTyping(id) {
+    var w = wins[id];
+    if (!w) return;
+    var t = w.el.querySelector(".win-msg.typing");
+    if (t) t.remove();
+  }
+
+  // 操作按钮 / 折叠 / 代码复制：事件委托（气泡内容会被流式重写，不能逐个绑）
+  document.addEventListener("click", function(e) {
+    var opBtn = e.target.closest(".msg-ops button");
+    if (opBtn) {
+      var msg = opBtn.closest(".win-msg");
+      var winEl = opBtn.closest(".win");
+      if (!msg || !winEl) return;
+      var op = opBtn.dataset.op;
+      if (op === "copy") {
+        if (navigator.clipboard) navigator.clipboard.writeText(msg.dataset.text || "").catch(function() {});
+      } else if (op === "resend") {
+        var winId = winEl.dataset.id;
+        if (winId && wins[winId]) doSend(winId, msg.dataset.text || "");
+      } else if (op === "quote") {
+        dockInput.value = "> " + (msg.dataset.text || "").slice(0, 200) + "\n";
+        dockInput.focus();
+      }
+      return;
+    }
+    var foldBtn = e.target.closest(".md-fold-btn");
+    if (foldBtn) {
+      var mb = foldBtn.closest(".win-msg");
+      mb.classList.toggle("folded");
+      foldBtn.textContent = mb.classList.contains("folded") ? "展开全文" : "收起";
+      return;
+    }
+    var copyBtn = e.target.closest(".md-code-copy");
+    if (copyBtn) {
+      var code = copyBtn.closest(".md-code").querySelector("code");
+      if (code && navigator.clipboard) navigator.clipboard.writeText(code.textContent).catch(function() {});
+      copyBtn.textContent = "已复制";
+      setTimeout(function() { copyBtn.textContent = "复制代码"; }, 1200);
+    }
   });
 
-  // ========== 桌宠姿态控制（基于三视图转身，8 姿态：idle/walk/run/jump/lift/sit/climb/lie） ==========
-  var PET_POSES=["idle","walk","run","jump","lift","sit","climb","lie"];
-  // 切换桌宠姿态：设 .win-pet-rig 的 data-pose（CSS keyframes 自动驱动）
-  function setPetPose(w,pose){
-    var rig=w.el.querySelector(".win-pet-rig");
-    if(!rig)return;
-    rig.dataset.pose=pose;
-    var oldPet=w.el.querySelector(".win-pet");
-    if(oldPet){
-      oldPet.dataset.pose=pose;
-      var imgs=oldPet.querySelectorAll(".win-pet-img");
-      for(var i=0;i<imgs.length;i++){
-        if(imgs[i].dataset.pose===pose)imgs[i].classList.add("active");
-        else imgs[i].classList.remove("active");
-      }
-    }
-  }
-  // 转身：angle ∈ [-1, 1]（-1=最右背对，1=最左背对；0=正脸）
-  // 用三张图 opacity + scaleX 交叉淡入淡出模拟水平旋转
-  function setPetFacing(w,angle){
-    var rig=w.el.querySelector(".win-pet-rig");
-    if(!rig)return;
-    // angle 范围：-1（背对，鼠标在最左侧）→ 0（正脸）→ 1（背对，鼠标在最右侧）
-    // 但 Q 版芙莉莲正面是"用户视角"，鼠标向右（angle=1）应该让角色往右看（侧面）
-    // 故正面朝鼠标方向 → angle 反映鼠标方向
-    var a=Math.max(-1,Math.min(1,angle));
-    rig.dataset.facing=a.toFixed(2);
-    var front=rig.querySelector(".rig-view-front");
-    var side=rig.querySelector(".rig-view-side");
-    var back=rig.querySelector(".rig-view-back");
-    if(!front||!side||!back)return;
-    var t=Math.abs(a); // 0=正面/背面，1=侧面
-    // 当 t<0.5：front/back 主导；t=0.5：side 主导
-    // 角度正→右侧，转身后看到 front 偏左 + side
-    if(t<0.33){
-      // 0°~60°：front (a>0) 或 back (a<0)
-      if(a>=0){
-        front.style.opacity=1; front.style.transform="scaleX(1)";
-        side.style.opacity=0;
-        back.style.opacity=0;
-      }else{
-        front.style.opacity=0;
-        side.style.opacity=0;
-        back.style.opacity=1; back.style.transform="scaleX(1)";
-      }
-    }else if(t<0.67){
-      // 60°~120°：side 主导
-      front.style.opacity=0;
-      back.style.opacity=0;
-      // 鼠标右 → 角色身体朝右 → 用户看到角色的左侧 → side scaleX(-1)
-      side.style.opacity=1;
-      side.style.transform=a>0?"scaleX(-1)":"scaleX(1)";
-    }else{
-      // >120°：过渡到对侧正面
-      if(a>=0){
-        // 鼠标最右 → 角色完全转身，用户看到角色背影 + 头部转过来
-        front.style.opacity=0;
-        back.style.opacity=1; back.style.transform="scaleX(-1)"; // 180° 翻转
-        side.style.opacity=0;
-      }else{
-        back.style.opacity=1; back.style.transform="scaleX(1)";
-        front.style.opacity=0;
-        side.style.opacity=0;
-      }
-    }
-  }
-  // 启动每个窗口的眨眼定时器（每 4-7 秒；新版三视图用动画 rotateY 模拟）
-  function startPetBlink(w){
-    if(w._blinkTimer)return;
-    function blink(){
-      var eyes=w.el.querySelectorAll(".rig-view");
-      eyes.forEach(function(e){
-        var cur=e.style.transform||"";
-        e.style.transform=cur+" scaleY(0.06)";
-      });
-      setTimeout(function(){
-        eyes.forEach(function(e){
-          // 重置 transform 让 CSS animation 接管
-          e.style.transform="";
-        });
-      },140);
-      w._blinkTimer=setTimeout(blink,3500+Math.random()*3500);
-    }
-    w._blinkTimer=setTimeout(blink,3000+Math.random()*2500);
-  }
-  function stopPetBlink(w){
-    clearTimeout(w._blinkTimer);w._blinkTimer=null;
-  }
-  // 随机换姿态（发消息/收到回复时触发）
-  function randomPetPose(w){
-    // 排除 jump（专给发消息瞬间）和 climb（任务场景）；包含 idle（自然状态）
-    var p=["idle","walk","run","sit","lie","lift"];
-    var chosen=p[Math.floor(Math.random()*p.length)];
-    setPetPose(w,chosen);
-    // 5-12 秒后恢复 idle
-    clearTimeout(w._petTimer);
-    w._petTimer=setTimeout(function(){setPetPose(w,"idle")},5000+Math.random()*7000);
-  }
-  // 让桌宠做指定动作一段时间再恢复（用于"发消息→jump"、"任务提交→climb"）
-  function petDoPose(w,pose,durationMs){
-    setPetPose(w,pose);
-    clearTimeout(w._petTimer);
-    w._petTimer=setTimeout(function(){setPetPose(w,"idle")},durationMs||3000);
-  }
-  // 窗口内发送消息（收消息时触发桌宠姿态）
-  function winSend(id){
-    var w=wins[id];
-    if(!w)return;
-    var inp=w.el.querySelector(".win-input");
-    var v=inp.value.trim();
-    if(!v)return;
-    inp.value="";
-    // 发消息：桌宠先 jump 一下，1.2s 后随机姿态
-    petDoPose(w,"jump",1200);
-    setTimeout(function(){randomPetPose(w);},1200);
-    // 根据 kind 发送
-    // 根据 kind 发送
-    if(w.data.kind==="chat"){
-      winAppendMsg(id,"user",v);
-      fetch(MAESTRO+"/api/chat/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:v,conv_id:id})})
-        .then(function(r){return r.json()})
-        .then(function(d){
-          if(d.error){winAppendMsg(id,"assistant","错误："+d.error);return}
-          winAppendMsg(id,"assistant",d.response||"");
-        })
-        .catch(function(){winAppendMsg(id,"assistant","连接失败")});
-    }else{
-      winAppendMsg(id,"user",v);
-      // 任务模式：桌宠先 climb 一下
-      petDoPose(w,"climb",1500);
-      fetch(MAESTRO+"/api/tasks",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:v,scenario:"auto",confirm:false,conv_id:id})})
-        .then(function(r){return r.json()})
-        .then(function(d){
-          winAppendMsg(id,"assistant","任务已提交："+(d.task_id||d.error||"完成"));
-          // 任务启动后让桌宠转 run（忙碌感）
-          petDoPose(w,"run",4000);
-        })
-        .catch(function(){winAppendMsg(id,"assistant","任务提交失败")});
-    }
-  }
-
-  // 窗口内追加消息
+  // 窗口内追加消息（Markdown 渲染 / 时间分隔 / 连续合并 / 清除打字指示）
   function winAppendMsg(id,role,text){
     var w=wins[id];
     if(!w)return;
+    if(role==="assistant")hideTyping(id);
     var body=w.el.querySelector(".win-body");
-    var div=document.createElement("div");
-    div.className="win-msg "+role;
-    // dataset.text 存原文（不含时间戳）：WS 广播去重用
-    div.dataset.text=text;
-    div.innerHTML=escapeHtml(text)+'<div class="win-time">'+new Date().toLocaleTimeString()+"</div>";
-    body.appendChild(div);
-    body.scrollTop=body.scrollHeight;
-    // 新 assistant 消息：把桌宠挂到这条气泡上（同时挂旧图系统和新的 rig）
-    if(role==="assistant"){
-      // 旧 img 系统（如果存在）
-      var oldPet=body.querySelector(".win-pet");
-      if(oldPet){
-        var oldParent=oldPet.closest(".win-msg");
-        if(oldParent)oldParent.classList.remove("has-pet");
-        div.classList.add("has-pet");
-        div.appendChild(oldPet);
-      }
-      // 新 rig 系统
-      var oldRig=body.querySelector(".win-pet-rig");
-      if(oldRig){
-        var oldRigParent=oldRig.closest(".win-msg");
-        if(oldRigParent)oldRigParent.classList.remove("has-pet");
-        div.classList.add("has-pet");
-        div.appendChild(oldRig);   // 必须在 if 内：流式重写 innerHTML 会销毁 rig，oldRig 可能为 null
-      }
+    var now=Date.now(),last=w._lastMsg;
+    // 时间分隔：首条消息或距上一条 >10 分钟
+    if(!last||now-last.t>600000){
+      var dv=document.createElement("div");
+      dv.className="msg-divider";
+      var d=new Date();
+      var sameDay=last&&new Date(last.t).toDateString()===d.toDateString();
+      dv.textContent=(sameDay?"":(d.getMonth()+1)+"-"+d.getDate()+" ")+
+        ("00"+d.getHours()).slice(-2)+":"+("00"+d.getMinutes()).slice(-2);
+      body.appendChild(dv);
     }
-    // 如果是任务消息，更新窗口标题状态 + 桌宠切 run（忙碌感）
+    var cont=last&&last.role===role&&(now-last.t)<120000;
+    var div=buildMsgEl(role,text,cont);
+    body.appendChild(div);
+    if(role==="assistant"&&text.length>MD_FOLD_LEN)applyFold(div,text);
+    body.scrollTop=body.scrollHeight;
+    w._lastMsg={t:now,role:role};
+    // 任务窗口：提交后标题加 ⚙
     if(w.data.kind==="task"&&text.includes("任务已提交")){
       var titleEl=w.el.querySelector(".win-title");
       if(titleEl&&!titleEl.textContent.includes("⚙")){
         titleEl.textContent="⚙ "+titleEl.textContent;
       }
-      petDoPose(w,"run",4000);
     }
-    // 收到助手回复时随机换姿态
-    if(role==="assistant")randomPetPose(w);
   }
 
   // 窗口拖动
@@ -1308,6 +1105,11 @@
   // ---------- 会话隔离（对话隔离） ----------
   function escapeHtml(s){return (s||"").replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
   var currentConv=null; // {id, title} 当前会话；null=未选择（输入框默认新建对话）
+  // ========== 跨对话上下文关联 ==========
+  // convLinks[convId] = [其他 convId,...]：发消息时随请求发给后端，注入对方最近几轮上下文
+  var convLinks={};
+  try{convLinks=JSON.parse(localStorage.getItem("maestro_conv_links")||"{}")||{}}catch(e){convLinks={}}
+  function saveConvLinks(){try{localStorage.setItem("maestro_conv_links",JSON.stringify(convLinks))}catch(e){}}
   var convKind="chat";  // 当前 hover 列表显示的会话类型（跟随 dockMode）
   var convListEl=document.getElementById("conv-list");
   function refreshPlaceholder(){
@@ -1470,10 +1272,10 @@
           doSend(newId,v);
         })
         .catch(function(){alert("创建会话失败")});
-      dockInput.value="";
+      resetDockInput();
       return;
     }
-    dockInput.value="";
+    resetDockInput();
     // 发送到选中的窗口
     doSend(targetId,v);
   }
@@ -1482,12 +1284,10 @@
     retryCount=retryCount||0;
     var w=wins[targetId];
     winAppendMsg(targetId,"user",v);
-    // 桌宠触发：聊天 jump，任务 climb
-    if(w.data.kind==="chat")petDoPose(w,"jump",1200);
-    else petDoPose(w,"climb",1500);
+    if(w.data.kind==="chat")showTyping(targetId); // 芙莉莲正在输入…
     if(w.data.kind==="chat"){
       // 聊天模式：流式回复（SSE）
-      fetch(MAESTRO+"/api/chat/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:v,conv_id:targetId})})
+      fetch(MAESTRO+"/api/chat/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:v,conv_id:targetId,link_conv_ids:(convLinks[targetId]||[])})})
         .then(function(resp){
           if(!resp.ok||!resp.body)throw new Error("http "+resp.status);
           var reader=resp.body.getReader(),dec=new TextDecoder(),buf="";
@@ -1495,8 +1295,16 @@
           function pump(){
             return reader.read().then(function(x){
               if(x.done){
-                // 流结束，显示完整回复
-                petDoPose(w,"walk",3000);
+                // 流结束：去流式光标 + 长回复折叠
+                var wb=wins[targetId]&&wins[targetId].el.querySelector(".win-body");
+                var lastDone=wb&&wb.lastElementChild;
+                if(lastDone&&lastDone.classList.contains("assistant")&&!lastDone.classList.contains("typing")){
+                  lastDone.dataset.text=visible;
+                  var cDone=lastDone.querySelector(".msg-content");
+                  if(cDone)cDone.innerHTML=mdRender(visible);
+                  applyFold(lastDone,visible);
+                }
+                hideTyping(targetId);
                 return;
               }
               buf+=dec.decode(x.value,{stream:true});
@@ -1510,21 +1318,21 @@
                   if(d.delta)visible+=d.delta;
                 }catch(e){}
               }
-              // 更新最后一条消息
+              // 更新最后一条消息（打字指示气泡就地转为正文，只重写 .msg-content）
               var body=wins[targetId]&&wins[targetId].el.querySelector(".win-body");
               if(!body)return;
               var lastMsg=body.lastElementChild;
+              if(lastMsg&&lastMsg.classList.contains("typing")){
+                lastMsg.classList.remove("typing");
+                lastMsg.dataset.text="";
+                lastMsg.innerHTML=AVATAR_HTML+'<div class="msg-content"></div><div class="msg-meta"><span class="win-time">'+new Date().toLocaleTimeString()+"</span></div>";
+              }
+              lastMsg=body.lastElementChild;
               if(lastMsg&&lastMsg.classList.contains("assistant")){
-                // 先摘下挂载在气泡上的桌宠元素，避免被 innerHTML 重写销毁
-                var keepRig=lastMsg.querySelector(".win-pet-rig");
-                var keepPet=lastMsg.querySelector(".win-pet");
-                var keepRigParent=null,keepPetParent=null;
-                if(keepRig){keepRigParent=keepRig.parentNode;keepRig.remove();}
-                if(keepPet){keepPetParent=keepPet.parentNode;keepPet.remove();}
-                lastMsg.innerHTML=escapeHtml(visible)+'<div class="win-time">'+new Date().toLocaleTimeString()+"</div>";
                 lastMsg.dataset.text=visible;
-                if(keepRig&&keepRigParent)keepRigParent.appendChild(keepRig);
-                if(keepPet&&keepPetParent)keepPetParent.appendChild(keepPet);
+                var cEl=lastMsg.querySelector(".msg-content");
+                if(cEl)cEl.innerHTML=mdRender(visible)+'<span class="caret"></span>';
+                else lastMsg.innerHTML=escapeHtml(visible)+'<div class="win-time">'+new Date().toLocaleTimeString()+"</div>";
               }else{
                 winAppendMsg(targetId,"assistant",visible);
               }
@@ -1536,6 +1344,7 @@
         })
         .catch(function(e){
           console.error("chat error:",e);
+          hideTyping(targetId);
           // 网络错误时重试
           if(retryCount<2&&(e.message.includes("Failed to fetch")||e.message.includes("network")||e.message.includes("fetch"))){
             winAppendMsg(targetId,"assistant","网络不稳定，正在重试...");
@@ -1713,8 +1522,16 @@
     winSelectRender();
   };
 
+  function resetDockInput(){dockInput.value="";dockInput.style.height="auto";}
   dockSend.addEventListener("click",dockSendAction);
-  dockInput.addEventListener("keydown",function(e){if(e.key==="Enter")dockSendAction()});
+  // 多行输入：Enter 发送，Shift+Enter 换行；随内容自动增高
+  dockInput.addEventListener("keydown",function(e){
+    if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();dockSendAction();resetDockInput();}
+  });
+  dockInput.addEventListener("input",function(){
+    dockInput.style.height="auto";
+    dockInput.style.height=Math.min(dockInput.scrollHeight,110)+"px";
+  });
 
   // 历史按钮：hover 出会话列表；点击查看当前会话历史消息
   var historyBtn=document.getElementById("history-btn");
