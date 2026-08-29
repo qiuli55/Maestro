@@ -458,3 +458,65 @@ def test_conversation_export_content(tmp_path, monkeypatch):
     r = c.get(f"/api/conversations/{conv_id}/export")
     assert "在吗" in r.text and "你好呀" in r.text
     assert "测试导出" in r.text
+
+
+def _stub_stream_llm(monkeypatch, captured):
+    """把 LLM 桩成流式返回"好"，并捕获 messages 供断言。"""
+
+    def fake_create(model, messages, temperature=0.2, **kw):
+        captured["messages"] = messages
+        return [type("ch", (), {"choices": [type("c", (), {"delta": type("d", (), {"content": "好"})})]})()]
+
+    monkeypatch.setattr(
+        "maestro.chat.llm.get_client",
+        lambda: type("c", (), {"chat": type("ch", (), {"completions": type("cp", (), {"create": staticmethod(fake_create)})})})(),
+    )
+
+
+def test_chat_linked_context_injected(tmp_db, monkeypatch):
+    """关联会话的最近内容应注入 system 消息（含对方会话标题）。"""
+    conv_a = db.create_conversation(tmp_db, title="窗口A")
+    conv_b = db.create_conversation(tmp_db, title="窗口B")
+    db.add_chat_message(tmp_db, "user", "我最喜欢草莓蛋糕", conv_id=conv_b)
+    db.add_chat_message(tmp_db, "assistant", "记住了", conv_id=conv_b)
+
+    captured = {}
+    _stub_stream_llm(monkeypatch, captured)
+    chat.chat(tmp_db, "我们聊到哪了", conv_id=conv_a, link_conv_ids=[conv_b])
+    system = captured["messages"][0]["content"]
+    assert "草莓蛋糕" in system
+    assert "窗口B" in system
+
+
+def test_chat_without_links_no_inject(tmp_db, monkeypatch):
+    """不关联时不注入对方内容。"""
+    conv_a = db.create_conversation(tmp_db, title="窗口A")
+    conv_b = db.create_conversation(tmp_db, title="窗口B")
+    db.add_chat_message(tmp_db, "user", "我最喜欢草莓蛋糕", conv_id=conv_b)
+
+    captured = {}
+    _stub_stream_llm(monkeypatch, captured)
+    chat.chat(tmp_db, "嗨", conv_id=conv_a)
+    system = captured["messages"][0]["content"]
+    assert "草莓蛋糕" not in system
+    assert "关联对话" not in system
+
+
+def test_stream_api_rejects_bad_links(tmp_db, tmp_path, monkeypatch):
+    """/api/chat/stream 的 link_conv_ids 必须是字符串数组。"""
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "maestro.db"))
+    c = TestClient(app)
+    conv_id = c.post("/api/conversations", json={"title": "t", "kind": "chat"}).json()["conv_id"]
+    r = c.post("/api/chat/stream", json={"message": "hi", "conv_id": conv_id, "link_conv_ids": "convB"})
+    assert r.status_code == 400
+
+
+def test_stream_api_filters_self_link(tmp_db, tmp_path, monkeypatch):
+    """关联自己应被过滤掉，不报错。"""
+    captured = {}
+    _stub_stream_llm(monkeypatch, captured)
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "maestro.db"))
+    c = TestClient(app)
+    conv_id = c.post("/api/conversations", json={"title": "t", "kind": "chat"}).json()["conv_id"]
+    r = c.post("/api/chat/stream", json={"message": "hi", "conv_id": conv_id, "link_conv_ids": [conv_id]})
+    assert r.status_code == 200

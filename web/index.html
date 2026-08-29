@@ -187,6 +187,32 @@
   #merge-btn{border:none;background:rgba(90,105,175,.15);color:#4d5ca5;font-size:12px;
     padding:7px 12px;border-radius:8px;cursor:pointer;white-space:nowrap}
   #merge-btn:hover{background:rgba(90,105,175,.3)}
+  /* ===== 跨对话上下文关联 ===== */
+  .win-links{display:none;flex-wrap:wrap;gap:4px;padding:5px 10px;align-items:center;
+    border-bottom:1px solid rgba(80,90,140,.12);background:rgba(91,107,181,.06);
+    font-size:10.5px;color:#55557a}
+  .win-links.show{display:flex}
+  .win-links .lk{background:rgba(91,107,181,.14);border-radius:6px;padding:1px 6px;
+    display:flex;gap:3px;align-items:center}
+  .win-links .lk b{font-weight:600;color:#4d5ca5;max-width:80px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .win-links .lk i{cursor:pointer;font-style:normal;color:#9a9ab8;padding:0 1px}
+  .win-links .lk i:hover{color:#d64545}
+  .win-btn.link{position:relative}
+  .win-btn.link.has-links::after{content:attr(data-n);position:absolute;top:-4px;right:-4px;
+    background:#4da3ff;color:#fff;font-size:8.5px;min-width:13px;height:13px;line-height:13px;
+    border-radius:7px;text-align:center;padding:0 2px}
+  #link-pop{position:fixed;z-index:900;display:none;background:#fff;border:1px solid rgba(80,90,140,.3);
+    border-radius:10px;box-shadow:0 6px 24px rgba(40,50,100,.25);padding:10px;width:236px;
+    font-size:12px;color:#33334f}
+  #link-pop.show{display:block}
+  #link-pop .lp-title{font-weight:600;margin-bottom:6px}
+  #link-pop .lp-item{display:flex;gap:6px;align-items:center;padding:4px 2px;cursor:pointer;border-radius:6px}
+  #link-pop .lp-item:hover{background:rgba(91,107,181,.08)}
+  #link-pop .lp-item input{accent-color:#5b6bb5;margin:0}
+  #link-pop .lp-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #link-pop .lp-empty{color:#9a9ab8;padding:6px 2px}
+  #link-pop .lp-hint{margin-top:6px;color:#9a9ab8;font-size:10.5px;line-height:1.5}
   .win-foot{
     display:flex;gap:8px;padding:10px 12px;border-top:1px solid rgba(80,90,140,.12);
     background:rgba(245,247,255,.5);border-radius:0 0 13px 13px
@@ -490,11 +516,13 @@
         '<span class="win-title">'+escapeHtml(title)+'</span>'+
         '<span class="win-kind">['+(kind==="task"?"任务":"聊天")+']</span>'+
         '<div class="win-btns">'+
+          '<button class="win-btn link" data-win="link" title="关联其他对话的上下文">&#128279;</button>'+
           '<button class="win-btn min" data-win="min" title="最小化">&#x2212;</button>'+
           '<button class="win-btn max" data-win="max" title="最大化">&#x25A1;</button>'+
           '<button class="win-btn close" data-win="close" title="关闭">×</button>'+
         '</div>'+
       '</div>'+
+      '<div class="win-links"></div>'+
       '<div class="win-body" id="win-body-'+id+'"><div class="win-msgs" data-conv="'+id+'"></div></div>'+
       '<div class="win-resize" data-win="resize"></div>'+
     '</div>';
@@ -534,6 +562,7 @@
         else if(act==="max")winMaximize(id);
         else if(act==="close")winClose(id);
         else if(act==="splitall")dissolveMergedAll(id);
+        else if(act==="link"){e.stopPropagation();toggleLinkPopover(id,btn);}
       });
     });
   }
@@ -566,12 +595,14 @@
         '<span class="win-title">合并窗口</span>'+
         '<span class="win-kind">[合并]</span>'+
         '<div class="win-btns">'+
+          '<button class="win-btn link" data-win="link" title="关联当前标签对话的上下文">&#128279;</button>'+
           '<button class="win-btn split" data-win="splitall" title="全部拆分回独立窗口">&#x21C5;</button>'+
           '<button class="win-btn min" data-win="min" title="最小化">&#x2212;</button>'+
           '<button class="win-btn max" data-win="max" title="最大化">&#x25A1;</button>'+
           '<button class="win-btn close" data-win="close" title="拆分并关闭">&#xD7;</button>'+
         '</div>'+
       '</div>'+
+      '<div class="win-links"></div>'+
       '<div class="mw-tabs"></div>'+
       '<div class="win-body" id="win-body-'+id+'"></div>'+
       '<div class="win-resize" data-win="resize"></div>'+
@@ -596,6 +627,7 @@
     renderMergedTabs(m);
     selectedWinId=cid; // 选中会话 = 激活的 tab
     updateDockPlaceholder();
+    renderLinksBar(cid);
     saveWindowsState();
   }
   function bindMergedEvents(m){
@@ -680,6 +712,7 @@
     var c=ensureMsgsContainer(cid);
     shellBody.appendChild(c);
     convHost[cid]=w.data.id;
+    renderLinksBar(cid);
     if(kids.length===0){
       // 合并窗口空了：直接移除壳
       removeWinMini(hostId);
@@ -709,6 +742,7 @@
       var shellBody=sw.el.querySelector(".win-body");
       shellBody.appendChild(ensureMsgsContainer(cid));
       convHost[cid]=sw.data.id;
+      renderLinksBar(cid);
     });
     winTabsRender();
     saveWindowsState();
@@ -1048,6 +1082,83 @@
     if (t) t.remove();
   }
 
+  // ========== 跨对话上下文关联 UI ==========
+  // convLinks[convId]=[其他 convId,...]（数据层定义在会话隔离区），随聊天请求发给后端
+  var linkPop = null;
+
+  // 窗口里的关联栏：显示该会话当前关联了谁，可单个移除
+  function renderLinksBar(convId) {
+    var host = winOfConv(convId);
+    if (!host) return;
+    var bar = host.el.querySelector(".win-links");
+    if (!bar) return;
+    var links = (convLinks[convId] || []).filter(function(cid) { return convMeta[cid]; });
+    var btn = host.el.querySelector('.win-btn[data-win="link"]');
+    if (!links.length) {
+      bar.classList.remove("show");
+      bar.innerHTML = "";
+      if (btn) { btn.classList.remove("has-links"); btn.removeAttribute("data-n"); }
+      return;
+    }
+    bar.classList.add("show");
+    bar.innerHTML = "<span>关联上下文：</span>" + links.map(function(cid) {
+      var t = convMeta[cid] ? convMeta[cid].title : cid;
+      return '<span class="lk"><b>' + escapeHtml(String(t).slice(0, 10)) + '</b><i data-unlink="' + cid + '" title="移除关联">×</i></span>';
+    }).join("");
+    if (btn) { btn.classList.add("has-links"); btn.setAttribute("data-n", String(links.length)); }
+  }
+
+  // 🔗 按钮：弹出其他会话勾选列表（勾选即保存；合并窗口作用于当前激活 tab 的会话）
+  function toggleLinkPopover(winId, anchorBtn) {
+    if (!linkPop) {
+      linkPop = document.createElement("div");
+      linkPop.id = "link-pop";
+      document.body.appendChild(linkPop);
+      document.addEventListener("mousedown", function(e) {
+        if (linkPop && linkPop.classList.contains("show") &&
+            !e.target.closest("#link-pop") && !e.target.closest('.win-btn[data-win="link"]')) {
+          linkPop.classList.remove("show");
+        }
+      });
+    }
+    var w = wins[winId];
+    if (!w) return;
+    var convId = w.data.kind === "merged" ? w.activeChild : winId;
+    if (!convId) return;
+    if (linkPop.classList.contains("show") && linkPop.dataset.conv === convId) {
+      linkPop.classList.remove("show");
+      return;
+    }
+    linkPop.dataset.conv = convId;
+    var others = Object.keys(convMeta).filter(function(cid) { return cid !== convId; });
+    var links = convLinks[convId] || [];
+    linkPop.innerHTML = '<div class="lp-title">关联其他对话的上下文</div>' +
+      (others.length ? others.map(function(cid) {
+        var m = convMeta[cid];
+        var checked = links.indexOf(cid) >= 0 ? " checked" : "";
+        return '<label class="lp-item"><input type="checkbox" data-cid="' + cid + '"' + checked +
+          '><span>' + escapeHtml(String(m.title || cid).slice(0, 14)) + '[' + (m.kind === "task" ? "任务" : "聊") + ']</span></label>';
+      }).join("") : '<div class="lp-empty">没有其他打开的窗口</div>') +
+      '<div class="lp-hint">勾选后，该对话发消息时会把对方最近几轮内容作为参考上下文发给模型。</div>';
+    linkPop.classList.add("show");
+    if (anchorBtn) {
+      var r = anchorBtn.getBoundingClientRect();
+      linkPop.style.left = Math.max(8, Math.min(r.left - 90, innerWidth - 252)) + "px";
+      linkPop.style.top = Math.max(8, r.top - linkPop.offsetHeight - 8) + "px";
+    }
+    linkPop.querySelectorAll("input[type=checkbox]").forEach(function(cb) {
+      cb.addEventListener("change", function() {
+        var arr = convLinks[convId] || (convLinks[convId] = []);
+        var cid = cb.dataset.cid;
+        if (cb.checked) { if (arr.indexOf(cid) < 0) arr.push(cid); }
+        else { convLinks[convId] = arr.filter(function(x) { return x !== cid; }); }
+        if (!convLinks[convId].length) delete convLinks[convId];
+        saveConvLinks();
+        renderLinksBar(convId);
+      });
+    });
+  }
+
   // 操作按钮 / 折叠 / 代码复制：事件委托（气泡内容会被流式重写，不能逐个绑）
   document.addEventListener("click", function(e) {
     var opBtn = e.target.closest(".msg-ops button");
@@ -1071,6 +1182,21 @@
       } else if (op === "quote") {
         dockInput.value = "> " + (msg.dataset.text || "").slice(0, 200) + "\n";
         dockInput.focus();
+      }
+      return;
+    }
+    var unlink = e.target.closest("[data-unlink]");
+    if (unlink) {
+      var winEl2 = unlink.closest(".win");
+      if (winEl2) {
+        var cid2 = winEl2.dataset.id;
+        if (wins[cid2] && wins[cid2].data.kind === "merged") cid2 = wins[cid2].activeChild;
+        if (cid2 && convLinks[cid2]) {
+          convLinks[cid2] = convLinks[cid2].filter(function(x) { return x !== unlink.dataset.unlink; });
+          if (!convLinks[cid2].length) delete convLinks[cid2];
+          saveConvLinks();
+          renderLinksBar(cid2);
+        }
       }
       return;
     }

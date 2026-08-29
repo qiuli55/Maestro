@@ -769,6 +769,11 @@ def chat_message_stream(payload: dict, background: BackgroundTasks):
     if not message:
         raise HTTPException(400, "message 不能为空")
     conv_id = payload.get("conv_id") or db.DEFAULT_CONV_ID
+    # 跨对话上下文关联：客户端勾选的其他会话 id（过滤自身 + 上限 4 个）
+    raw_links = payload.get("link_conv_ids") or []
+    if not isinstance(raw_links, list) or not all(isinstance(x, str) for x in raw_links):
+        raise HTTPException(400, "link_conv_ids 必须是字符串数组")
+    link_conv_ids = [x for x in raw_links if x != conv_id][:4]
     conn = db.init_db()
     try:
         if not db.get_conversation(conn, conv_id):
@@ -781,7 +786,7 @@ def chat_message_stream(payload: dict, background: BackgroundTasks):
     def gen():
         conn2 = db.init_db()
         try:
-            for kind, data in chat.chat_stream(conn2, message, conv_id=conv_id):
+            for kind, data in chat.chat_stream(conn2, message, conv_id=conv_id, link_conv_ids=link_conv_ids):
                 if kind == "delta":
                     yield f"data: {json.dumps({'delta': data}, ensure_ascii=False)}\n\n"
                 elif kind == "error":
