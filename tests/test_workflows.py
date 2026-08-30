@@ -75,7 +75,9 @@ def test_apply_workflow_defaults_unknown_raises():
         pass
 
 
-def test_workflows_endpoint():
+def test_workflows_endpoint(tmp_path, monkeypatch):
+    # 隔离 DB：环境里可能残留用户自建工作流（其条目不含 preset 字段）
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "maestro.db"))
     c = TestClient(app)
     r = c.get("/api/workflows")
     assert r.status_code == 200

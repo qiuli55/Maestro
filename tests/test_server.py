@@ -386,3 +386,87 @@ def test_create_task_auto_fallback_on_error(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert r.json()["scenario"] == "a"
     assert "回退" in (r.json().get("detect_reason") or "")
+
+
+# ---------- P0：CSRF Origin 守卫 / WS 鉴权与订阅 ----------
+
+
+def test_csrf_origin_without_json_rejected(tmp_path, monkeypatch):
+    """跨源写请求（带 Origin）且非 application/json → 415（浏览器简单请求 CSRF 防线）。"""
+    monkeypatch.delenv("MAESTRO_API_KEY", raising=False)
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "m.db"))
+    c = TestClient(app)
+    r = c.post("/api/chat", content="hi",
+               headers={"Origin": "https://evil.example", "Content-Type": "text/plain"})
+    assert r.status_code == 415
+
+
+def test_csrf_no_origin_allowed(tmp_path, monkeypatch):
+    """无 Origin（curl/服务间调用）不受 CSRF 守卫影响。"""
+    monkeypatch.delenv("MAESTRO_API_KEY", raising=False)
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "m.db"))
+    c = TestClient(app)
+    r = c.post("/api/chat", content="hi", headers={"Content-Type": "text/plain"})
+    assert r.status_code != 415
+
+
+def test_ws_requires_key_when_set(tmp_path, monkeypatch):
+    """设了 MAESTRO_API_KEY：无 key 的 WS 连接被拒（4401），带 key 放行。"""
+    monkeypatch.setenv("MAESTRO_API_KEY", "secret123")
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "m.db"))
+    c = TestClient(app)
+    # 无 key：服务端在 accept 前 close(4401) -> 客户端侧抛 WebSocketDisconnect
+    rejected = False
+    try:
+        with c.websocket_connect("/ws") as ws:
+            ws.receive_text()
+    except Exception:
+        rejected = True  # close/断开都算拒绝
+    assert rejected, "无 key 的 WS 连接应被拒绝"
+    # 带 key：正常建立
+    with c.websocket_connect("/ws?key=secret123") as ws:
+        ws.send_text("ping")
+    # 错误 key：同样拒绝
+    rejected2 = False
+    try:
+        with c.websocket_connect("/ws?key=wrong") as ws:
+            ws.receive_text()
+    except Exception:
+        rejected2 = True
+    assert rejected2, "错误 key 的 WS 连接应被拒绝"
+    monkeypatch.delenv("MAESTRO_API_KEY")
+
+
+def test_ws_broadcast_respects_subscription(tmp_path, monkeypatch):
+    """订阅 A 会话的连接只收 A 的消息；未订阅连接收全部（兼容）。"""
+    import asyncio
+
+    import maestro.server as srv
+
+    async def scenario():
+        # 直接操作订阅表验证过滤逻辑（不做真实握手，聚焦路由语义）
+        class FakeWS:
+            def __init__(self):
+                self.sent = []
+
+        ws = FakeWS()
+        with srv._ws_lock:
+            srv._active_ws_connections.append(ws)
+            srv._ws_subscriptions[ws] = {"conv_A"}
+        assert srv._ws_wants(ws, "conv_A") is True
+        assert srv._ws_wants(ws, "conv_B") is False
+        # 全收模式
+        srv._ws_subscriptions[ws] = {"__all__"}
+        assert srv._ws_wants(ws, "conv_B") is True
+        with srv._ws_lock:
+            srv._active_ws_connections.remove(ws)
+            srv._ws_subscriptions.pop(ws, None)
+
+    asyncio.run(scenario())
+
+
+def test_approval_push_hook_registered():
+    """sandbox.on_request 钩子已注册（审批实时推送不再依赖 2s 轮询）。"""
+    from maestro import sandbox
+
+    assert len(sandbox._notify_hooks) >= 1

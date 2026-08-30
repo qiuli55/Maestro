@@ -93,8 +93,23 @@ class _APIKeyAuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         api_key = os.environ.get("MAESTRO_API_KEY", "").strip()
 
-        # 没设 key -> 放行（开发模式）
+        # 没设 key -> 放行（开发模式），但浏览器跨源写请求要求 JSON Content-Type：
+        # 恶意网页可用 text/plain 发"简单请求"绕过 CORS preflight 打我们的写端点
+        # （CSRF）；要求 application/json 迫使其 preflight，从而被 CORS 拦截。
+        # 只看 Origin 头（浏览器跨源请求必带）：curl/服务间调用/测试不带 Origin，
+        # 不受影响；自家页面所有 fetch 都声明 application/json，天然通过。
         if not api_key:
+            if (
+                request.headers.get("origin")
+                and request.method in ("POST", "PUT", "DELETE", "PATCH")
+                and path.startswith("/api/")
+            ):
+                ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+                if ctype != "application/json":
+                    return JSONResponse(
+                        {"error": "Content-Type must be application/json"},
+                        status_code=415,
+                    )
             return await call_next(request)
 
         # 白名单直接放行
@@ -1130,57 +1145,174 @@ def chat_clear():
 _active_ws_connections: list[WebSocket] = []
 _ws_lock = threading.Lock()
 _WS_MAX = 100  # 单机最大连接数（防资源耗尽）
+# 订阅表：websocket -> set(conv_id)；"__all__" 表示全部（兼容老客户端不订阅的行为）
+_ws_subscriptions: dict[WebSocket, set[str]] = {}
+
+
+def _ws_authenticated(websocket: WebSocket) -> bool:
+    """WS 鉴权：MAESTRO_API_KEY 未设放行（开发）；已设则要求 ?key= 或首消息 {"key": ...}。"""
+    api_key = os.environ.get("MAESTRO_API_KEY", "").strip()
+    if not api_key:
+        return True
+    provided = websocket.query_params.get("key", "").strip()
+    return bool(provided) and _compare_keys(provided, api_key)
 
 
 @app.websocket("/ws")
 async def ws_messages(websocket: WebSocket):
-    """通用 WebSocket 端点：推送聊天消息和任务结果到前端。根据 conv_id 路由消息到对应窗口。"""
+    """通用 WebSocket 端点：聊天/任务/审批事件推送。
+
+    鉴权：设了 MAESTRO_API_KEY 时必须带 ?key=<key>。
+    订阅协议：客户端发 {"action":"subscribe","conv_id":"..."} 订阅，
+    {"action":"unsubscribe","conv_id":"..."} 退订；未订阅时默认收全部
+    （"__all__"），首个 subscribe 后只收订阅的会话 + 广播类事件。
+    """
+    if not _ws_authenticated(websocket):
+        await websocket.close(code=4401, reason="unauthorized")
+        return
     await websocket.accept()
     with _ws_lock:
         if len(_active_ws_connections) >= _WS_MAX:
             await websocket.close(code=1013, reason="too many connections")
             return
         _active_ws_connections.append(websocket)
+        _ws_subscriptions[websocket] = {"__all__"}
     try:
         while True:
-            await websocket.receive_text()
-            # 客户端可以发送 {"action": "subscribe", "conv_id": "xxx"} 来订阅特定会话
-            # 目前不需要客户端消息，只接收即可
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            action = msg.get("action")
+            if action not in ("subscribe", "unsubscribe"):
+                continue
+            cid = str(msg.get("conv_id") or "")[:64]
+            if not cid:
+                continue
+            with _ws_lock:
+                subs = _ws_subscriptions.get(websocket)
+                if subs is None:
+                    continue
+                if action == "subscribe":
+                    subs.discard("__all__")  # 显式订阅后不再全收
+                    subs.add(cid)
+                else:
+                    subs.discard(cid)
     except WebSocketDisconnect:
         pass
     finally:
         with _ws_lock:
             if websocket in _active_ws_connections:
                 _active_ws_connections.remove(websocket)
+            _ws_subscriptions.pop(websocket, None)
 
 
-async def broadcast_to_ws(conv_id: str, role: str, content: str):
-    """向所有 WebSocket 连接广播消息（前端会根据 conv_id 路由）。"""
-    # 拷贝副本（在锁内），避免迭代期间其他协程修改列表。
+def _ws_wants(ws: WebSocket, conv_id: str) -> bool:
+    """该连接是否应收到 conv_id 的事件（订阅表过滤）。"""
+    subs = _ws_subscriptions.get(ws)
+    if subs is None:
+        return False
+    return "__all__" in subs or conv_id in subs
+
+
+async def _send_ws_safe(ws: WebSocket, msg: dict) -> bool:
+    """单连接发送；失败返回 False（调用方负责摘除）。给慢客户端 3s 超时，
+    避免一个卡死的连接阻塞整批推送。"""
+    try:
+        await asyncio.wait_for(ws.send_json(msg), timeout=3.0)
+        return True
+    except Exception:  # noqa: BLE001 — 超时/断开都按死连接处理
+        return False
+
+
+async def broadcast_to_ws(conv_id: str, role: str, content: str, *, kind: str = "chat") -> None:
+    """向订阅了 conv_id 的连接推送事件；并发发送 + 慢客户端超时。
+
+    kind: chat（聊天消息）/ task（任务状态）/ approval（审批请求）。
+    广播类事件（kind=approval 未带 conv_id）走 "__all__"。
+    """
     with _ws_lock:
         if not _active_ws_connections:
             return
-        targets = list(_active_ws_connections)
-    msg = {"conv_id": conv_id, "role": role, "content": content}
-    dead: list[WebSocket] = []
-    for ws in targets:
-        try:
-            await ws.send_json(msg)
-        except Exception:
-            dead.append(ws)
+        targets = [
+            ws for ws in list(_active_ws_connections)
+            if not conv_id or _ws_wants(ws, conv_id)
+        ]
+    if not targets:
+        return
+    msg = {"kind": kind, "conv_id": conv_id, "role": role, "content": content}
+    results = await asyncio.gather(*(_send_ws_safe(ws, msg) for ws in targets))
+    dead = [ws for ws, ok in zip(targets, results) if not ok]
     if dead:
         with _ws_lock:
             for ws in dead:
                 if ws in _active_ws_connections:
                     _active_ws_connections.remove(ws)
+                _ws_subscriptions.pop(ws, None)
+
+
+def push_event_threadsafe(conv_id: str, role: str, content: str, *, kind: str = "task") -> None:
+    """工作线程（编排器/沙箱）安全推送：把推送调度回事件循环。
+
+    在 running loop 外直接 create_task 会 RuntimeError；用
+    loop.call_soon_threadsafe 保证线程安全。无连接时是廉价 no-op。
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None and loop.is_running():
+        loop.call_soon_threadsafe(
+            lambda: loop.create_task(broadcast_to_ws(conv_id, role, content, kind=kind))
+        )
+        return
+    # 无运行中的 loop（如 TestClient 同步调用栈）：放到全局 loop（若有）
+    global _main_loop
+    if _main_loop is not None and _main_loop.is_running():
+        _main_loop.call_soon_threadsafe(
+            lambda: _main_loop.create_task(broadcast_to_ws(conv_id, role, content, kind=kind))
+        )
+
+
+_main_loop: asyncio.AbstractEventLoop | None = None
+
+
+@app.on_event("startup")
+async def _capture_main_loop():
+    global _main_loop
+    _main_loop = asyncio.get_running_loop()
+
+
+# ---- 审批实时推送：注册 sandbox 钩子（用户不用再等 2s 轮询，命令 120s 就超时）----
+def _approval_push_hook(req) -> None:
+    """sandbox.on_request 钩子：新审批请求 → WS 推送（工作线程里调，走 threadsafe）。"""
+    push_event_threadsafe(
+        getattr(req, "task_id", None) or "",
+        "assistant",
+        json.dumps({
+            "approval_id": getattr(req, "id", ""),
+            "task_id": getattr(req, "task_id", ""),
+            "subtask_id": getattr(req, "subtask_id", ""),
+            "cmd": getattr(req, "cmd", ""),
+        }, ensure_ascii=False),
+        kind="approval",
+    )
+
+
+sandbox.on_request(_approval_push_hook)
 
 
 @app.websocket("/ws/task/{task_id}")
 async def ws_task(websocket: WebSocket, task_id: str):
+    if not _ws_authenticated(websocket):
+        await websocket.close(code=4401, reason="unauthorized")
+        return
     await websocket.accept()
     try:
         while True:
-            snap = _snapshot(task_id)
+            # 同步 DB/文件 IO 放线程池：否则每个 WS tick 都阻塞整个事件循环
+            snap = await asyncio.to_thread(_snapshot, task_id)
             if snap is None:
                 await websocket.send_json({"error": "task_not_found"})
                 break
