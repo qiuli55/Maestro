@@ -148,6 +148,7 @@ def init_db(db_path: Path | str | None = None, *, use_cache: bool | None = None)
             desc            TEXT NOT NULL,
             worker_type     TEXT NOT NULL,
             model           TEXT,
+            stage           INTEGER,
             status          TEXT NOT NULL DEFAULT 'pending',
             output          TEXT,
             error           TEXT,
@@ -218,6 +219,7 @@ def init_db(db_path: Path | str | None = None, *, use_cache: bool | None = None)
     _ensure_conv_column(conn)
     _ensure_conv_kind_column(conn)
     _ensure_subtask_model_column(conn)
+    _ensure_subtask_stage_column(conn)
     _ensure_default_conversation(conn)
     # 索引（高频查询加速）。CREATE INDEX IF NOT EXISTS 已是幂等。
     # subtasks.task_id：每次执行任务都按 task_id 查子任务列表
@@ -302,6 +304,13 @@ def _ensure_subtask_model_column(conn: sqlite3.Connection):
         _safe_alter(conn, "ALTER TABLE subtasks ADD COLUMN model TEXT")
 
 
+def _ensure_subtask_stage_column(conn: sqlite3.Connection):
+    """存量库补 subtasks.stage（工作流环节序号：环节内并行、环节间串行）。"""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(subtasks)").fetchall()}
+    if "stage" not in cols:
+        _safe_alter(conn, "ALTER TABLE subtasks ADD COLUMN stage INTEGER")
+
+
 def _ensure_conv_kind_column(conn: sqlite3.Connection):
     """存量库补 conversations.kind 列（chat/task，默认 chat）+ 按标题迁移旧数据。"""
     cols = {r[1] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
@@ -356,14 +365,14 @@ def add_subtasks(conn: sqlite3.Connection, task_id: str, subtasks: list[dict]) -
     now = _now()
     rows = [
         (st["id"], task_id, idx, st["desc"], st["worker_type"], PENDING,
-         st.get("source_segments"), st.get("model"), now, now)
+         st.get("source_segments"), st.get("model"), st.get("stage"), now, now)
         for idx, st in enumerate(subtasks)
     ]
     # executemany 一次 INSERT 多行，比循环单条 INSERT 快 ~10x
     conn.executemany(
         """INSERT INTO subtasks
-           (id, task_id, idx, desc, worker_type, status, source_segments, model, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+           (id, task_id, idx, desc, worker_type, status, source_segments, model, stage, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
         rows,
     )
     conn.commit()

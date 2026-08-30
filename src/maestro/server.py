@@ -439,9 +439,9 @@ _WORKER_META = {
 
 
 def _workflow_to_subtasks(definition: dict) -> list[dict]:
-    """用户工作流定义 → 有序启用卡片（跳过禁用卡片）。"""
+    """用户工作流定义 → 有序启用卡片（跳过禁用卡片），带 stage 序号与 use_prev。"""
     subs = []
-    for st in (definition or {}).get("stages") or []:
+    for stage_idx, st in enumerate((definition or {}).get("stages") or []):
         stage_name = str(st.get("name") or "环节").strip()[:30]
         for c in st.get("cards") or []:
             if not c.get("enabled", True):
@@ -454,6 +454,8 @@ def _workflow_to_subtasks(definition: dict) -> list[dict]:
                 "worker_type": c.get("worker") or "embedded",
                 "model": c.get("model") or None,
                 "skills": [str(s)[:30] for s in (c.get("skills") or [])][:8],
+                "stage": stage_idx,
+                "use_prev": bool(c.get("use_prev")),
             })
     return subs
 

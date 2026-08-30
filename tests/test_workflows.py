@@ -4,7 +4,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from maestro import config, db
+from maestro import config, db, orchestrator
 from maestro.server import app, apply_workflow_defaults
 
 
@@ -240,3 +240,65 @@ def test_create_task_with_subtasks(tmp_path, monkeypatch):
     assert len(subs) == 2
     assert subs[1]["model"] == "deepseek:deepseek-reasoner"
     assert captured["parallel"] is True
+
+
+def test_custom_workflow_stage_serial_with_prev_output(tmp_db, monkeypatch):
+    """工作流：环节间串行 + [[PREV_OUTPUT]] 注入上一环节产出。"""
+    from maestro.workers.base import WorkerResult
+
+    spawns = []  # (desc,)
+    def _fake_spawn(prompt, workdir, timeout, task_id=None, subtask_id=None):
+        spawns.append(prompt)
+        return WorkerResult("环节产出-" + str(len(spawns)), "", False, 0)
+
+    monkeypatch.setattr("maestro.orchestrator.get_worker", lambda name: type(
+        "W", (), {"spawn": staticmethod(_fake_spawn),
+                  "check_health": lambda self: (True, "ok")})())
+    # 直接用 run_task 等价链路：prepare_custom + execute_task
+    tid = orchestrator.prepare_custom(
+        tmp_db, "做一份发布方案", subtasks=[
+            {"desc": "环节1卡片", "worker_type": "fake", "stage": 0},
+            {"desc": "环节2卡片，引用上一环节", "worker_type": "fake", "stage": 1, "use_prev": True},
+        ], parallel=True)
+    orchestrator.execute_task(tmp_db, tid)
+    # 环节2 的 prompt 应包含环节1 的产出
+    assert len(spawns) == 2
+    assert "环节产出-1" in spawns[1], "环节2 应注入环节1 产出"
+    task = db.get_task(tmp_db, tid)
+    assert task["status"] == db.DONE
+    subs = db.get_subtasks(tmp_db, tid)
+    assert all(s["status"] == db.DONE for s in subs)
+
+
+def test_custom_workflow_first_stage_no_prev(tmp_db, monkeypatch):
+    """第一环节（stage 0）即使标了 use_prev 也无产出可注入，不报错。"""
+    from maestro.workers.base import WorkerResult
+
+    spawns = []
+    def _fake_spawn(prompt, workdir, timeout, task_id=None, subtask_id=None):
+        spawns.append(prompt)
+        return WorkerResult("OK", "", False, 0)
+
+    monkeypatch.setattr("maestro.orchestrator.get_worker", lambda name: type(
+        "W", (), {"spawn": staticmethod(_fake_spawn),
+                  "check_health": lambda self: (True, "ok")})())
+    tid = orchestrator.prepare_custom(
+        tmp_db, "x", subtasks=[
+            {"desc": "第一环节", "worker_type": "fake", "stage": 0, "use_prev": True},
+        ], parallel=False)
+    orchestrator.execute_task(tmp_db, tid)
+    assert "（上一环节无产出）" in spawns[0] or "无环节信息" in spawns[0]
+
+
+def test_workflow_to_subtasks_carries_stage(tmp_path, monkeypatch):
+    """_workflow_to_subtasks 带 stage 序号与 use_prev。"""
+    from maestro.server import _workflow_to_subtasks
+
+    subs = _workflow_to_subtasks({"stages": [
+        {"name": "调研", "cards": [{"desc": "a", "worker": "embedded"}]},
+        {"name": "写作", "cards": [{"desc": "b", "worker": "embedded", "use_prev": True},
+                                    {"desc": "c", "worker": "embedded"}]},
+    ]})
+    assert [s["stage"] for s in subs] == [0, 1, 1]
+    assert subs[1]["use_prev"] is True
+    assert subs[0]["use_prev"] is False

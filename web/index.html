@@ -2263,6 +2263,9 @@
       '<div class="wc-config">'+
         '<div class="wc-lrow"><span class="wl">智能体</span><select class="wc-worker">'+workerOpts+'</select>'+
           '<span class="wl">模型</span><select class="wc-model">'+modelOpts+'</select></div>'+
+        '<div class="wc-lrow" style="margin-top:5px"><label style="display:flex;gap:5px;align-items:center;cursor:pointer">'+
+          '<input type="checkbox" class="wc-prev"'+(c.use_prev?" checked":"")+(si===0?" disabled":"")+'>'+
+          '<span style="font-size:11px">引用上一环节产出（把上一环节结果喂给这张卡片）</span></label></div>'+
         '<textarea class="wc-desc" placeholder="这张卡片负责什么任务（会与你的主输入合并）">'+escapeHtml(c.desc)+'</textarea>'+
         '<div class="skill-chips">'+(c.skills&&c.skills.length?"":"<span style='color:#b6bcd8;font-size:10px'>尚未选择技能</span>")+'</div>'+
         '<div class="skill-add"><input placeholder="输入技能名，回车自动分类"><button type="button">添加</button></div>'+
@@ -2291,6 +2294,8 @@
     });
     card.querySelector(".wc-worker").addEventListener("change",function(e){c.worker=e.target.value;updateCardMeta();});
     card.querySelector(".wc-model").addEventListener("change",function(e){c.model=e.target.value||null;updateCardMeta();});
+    var prevCb=card.querySelector(".wc-prev");
+    if(prevCb)prevCb.addEventListener("change",function(){c.use_prev=prevCb.checked;});
     function updateCardMeta(){
       var meta=card.querySelector(".wc-meta");
       meta.innerHTML='<span>'+escapeHtml(wfAgentLabel(c.worker))+'</span>'+
@@ -2343,13 +2348,14 @@
   }
   function wfCollectSubtasks(){
     var subs=[];
-    wfState.stages.forEach(function(st){
+    wfState.stages.forEach(function(st,si){
       st.cards.forEach(function(c){
         if(!c.enabled)return;
         var desc=(c.desc||"").trim();
         if(!desc)return;
         subs.push({desc:"【"+st.name+"】"+desc,worker_type:c.worker||"embedded",
-          model:c.model||null,skills:(c.skills||[]).slice()});
+          model:c.model||null,skills:(c.skills||[]).slice(),
+          stage:si,use_prev:!!c.use_prev&&si>0});
       });
     });
     return subs;
@@ -2436,7 +2442,7 @@
           if(d&&d.definition&&d.definition.stages){
             wfState.stages=d.definition.stages.map(function(st){
               return {name:st.name,cards:st.cards.map(function(c){
-                return {id:c.id,enabled:c.enabled,desc:c.desc,worker:c.worker,model:c.model,skills:(c.skills||[]).slice()};
+                return {id:c.id,enabled:c.enabled,desc:c.desc,worker:c.worker,model:c.model,skills:(c.skills||[]).slice(),use_prev:!!c.use_prev};
               })};
             });
             renderWfBuilder();

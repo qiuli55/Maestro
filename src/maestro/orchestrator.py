@@ -80,7 +80,25 @@ def _execute_subtask(db_path: str, task_id: str, subtask: dict, timeout: int, mo
                 db.log_event(tconn, task_id, f"subtask {sid} guard warning", sid, data={"reason": reason})
 
         # 沙箱防线 2：worker 内部（embedded 的 run_command）走审批流，任务上下文用于审批归属
-        res = worker.spawn(subtask["desc"], str(workdir), timeout, task_id=task_id, subtask_id=sid)
+        desc = subtask["desc"]
+        if "[[PREV_OUTPUT]]" in desc:
+            # 上一环节产出注入：取同任务 stage 更小且已 DONE 的子任务 output
+            # （最近 3 个、总长 4000 字上限，防上下文爆炸）
+            stg = subtask.get("stage")
+            if stg is not None:
+                prev_rows = tconn.execute(
+                    "SELECT output FROM subtasks WHERE task_id=? AND stage<? AND status='done' "
+                    "AND output IS NOT NULL ORDER BY idx DESC LIMIT 3",
+                    (task_id, stg),
+                ).fetchall()
+                prev_text = "\n\n".join(r["output"] for r in reversed(prev_rows))[:4000]
+                desc = desc.replace(
+                    "[[PREV_OUTPUT]]",
+                    "（上一环节产出）\n" + (prev_text or "（上一环节无产出）") + "\n",
+                )
+            else:
+                desc = desc.replace("[[PREV_OUTPUT]]", "（无环节信息）")
+        res = worker.spawn(desc, str(workdir), timeout, task_id=task_id, subtask_id=sid)
 
         if res.timed_out or res.returncode != 0 or res.error:
             if _is_retryable_worker_error(res):
@@ -192,11 +210,19 @@ def prepare_custom(
             raise ValueError(f"卡片 #{i + 1} 智能体非法: {wt}")
         skills = [str(s)[:30] for s in (st.get("skills") or [])][:8]
         desc_full = skills_mod.expand_desc(desc[:800], skills, lib)
+        # 引用上一环节产出：desc 前加标记，执行时由 _execute_subtask 替换为
+        # 上一 stage 已 DONE 子任务的 output（环节间数据传递）
+        if st.get("use_prev"):
+            desc_full = "[[PREV_OUTPUT]]\n" + desc_full
+        stage = st.get("stage")
+        if stage is not None and (not isinstance(stage, int) or stage < 0):
+            raise ValueError(f"卡片 #{i + 1} stage 非法: {stage}")
         cleaned.append({
             "id": f"{task_id}_st_{i + 1}",
             "desc": desc_full,
             "worker_type": wt,
             "model": st.get("model") or None,
+            "stage": stage,
         })
         # skills 白名单之外的信息不落库
     db.create_task(conn, task_id, prompt, conv_id=conv_id)
@@ -339,6 +365,42 @@ def execute_task(
     parallel = bool(task["parallel"])
     no_merge = bool(task["no_merge"])
     db_path = _db_path(conn)  # 主线程算路径，跨线程只传字符串
+
+    # 工作流（custom）：按 stage 分组——环节内并行、环节间串行（前一环节
+    # 产出经 [[PREV_OUTPUT]] 注入下一环节）
+    if task["scenario"] == "custom":
+        stage_groups: dict[int, list[dict]] = {}
+        for st in subtasks:
+            stage_groups.setdefault(st.get("stage") or 0, []).append(st)
+        for stage_no in sorted(stage_groups):
+            if _is_cancelled(conn, task_id):
+                db.log_event(conn, task_id, "workflow cancelled mid-stage, stop dispatch",
+                             data={"stage": stage_no})
+                break
+            group = stage_groups[stage_no]
+            db.log_event(conn, task_id, f"workflow stage {stage_no} start",
+                         data={"cards": [st["id"] for st in group]})
+            if parallel and len(group) > 1:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(group), 8)) as ex:
+                    futures = [ex.submit(_execute_subtask, db_path, task_id, st, timeout, model)
+                               for st in group]
+                    for f in concurrent.futures.as_completed(futures):
+                        f.result()
+            else:
+                for st in group:
+                    _execute_subtask(db_path, task_id, st, timeout, model)
+        # 终态聚合：与 resume_incomplete 一致
+        final_subs = db.get_subtasks(conn, task_id)
+        if _is_cancelled(conn, task_id):
+            return task_id
+        n_failed = sum(1 for s in final_subs if s["status"] == db.FAILED)
+        final_status = db.FAILED if n_failed else db.DONE
+        db.set_task_status(conn, task_id, final_status)
+        db.log_event(conn, task_id, f"workflow complete -> {final_status}",
+                     data={"n_failed": n_failed})
+        if final_status == db.DONE:
+            _push_result_to_conv(conn, task_id)
+        return task_id
 
     # 场景 A：串行（逐个投喂，互不干扰）；B/C：并行 -> 汇总
     if task["scenario"] == "a":
