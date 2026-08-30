@@ -567,6 +567,16 @@ def get_chat_history(conn: sqlite3.Connection, limit: int = 20, conv_id: str | N
     return [dict(r) for r in reversed(rows)]
 
 
+def prune_old_events(conn: sqlite3.Connection, days: int = 30) -> int:
+    """删除 days 天前的任务事件（保留策略，防 task_events 无限增长）。返回删除条数。"""
+    from datetime import timedelta
+
+    cutoff = (datetime.now(UTC) - timedelta(days=max(1, days))).isoformat()
+    cur = conn.execute("DELETE FROM task_events WHERE ts < ?", (cutoff,))
+    conn.commit()
+    return cur.rowcount
+
+
 def clear_chat_history(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM chat_messages")
     conn.commit()

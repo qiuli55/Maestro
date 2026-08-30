@@ -144,7 +144,10 @@ def _compare_keys(provided: str, expected: str) -> bool:
 # 这样测试不需要 reimport server，monkeypatch.setenv/delenv 即可切换鉴权。
 app.add_middleware(_APIKeyAuthMiddleware)
 
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="maestro-task")
+# 快/慢池分离：prepare（拆分，毫秒级）走快池；execute/retry/resume（长任务，
+# 最长 600s）走慢池。共用一个池时，4 个长任务会把新任务的拆分也饿死。
+_executor_fast = ThreadPoolExecutor(max_workers=4, thread_name_prefix="maestro-fast")
+_executor_slow = ThreadPoolExecutor(max_workers=2, thread_name_prefix="maestro-slow")
 
 _POLL_INTERVAL = 1.2  # WS 轮询间隔（秒）
 
@@ -228,6 +231,12 @@ def _retry_job(subtask_id: str, timeout: int = 600):
     conn = db.init_db()
     try:
         orchestrator.retry_subtask(conn, subtask_id, timeout=timeout)
+    except Exception as e:  # noqa: BLE001 — 重派失败也要落库可见
+        try:
+            db.set_subtask_output(conn, subtask_id, db.FAILED,
+                                  error=f"[重派失败] {type(e).__name__}: {str(e)[:200]}")
+        except Exception:  # noqa: BLE001
+            pass
     finally:
         conn.close()
 
@@ -236,6 +245,9 @@ def _resume_job(task_id: str, timeout: int = 600):
     conn = db.init_db()
     try:
         orchestrator.resume_incomplete(conn, task_id, timeout=timeout)
+    except Exception as e:  # noqa: BLE001 — 续跑失败也要落库可见
+        db.set_task_status(conn, task_id, db.FAILED)
+        db.log_event(conn, task_id, "resume FAILED", data={"error": str(e)[:500]})
     finally:
         conn.close()
 
@@ -762,7 +774,7 @@ async def create_task(payload: dict):
 
     # 预先生成 task_id 立即返回；拆分交给后台线程
     task_id = f"task_{os.urandom(4).hex()}"
-    _executor.submit(
+    _executor_fast.submit(
         _prepare_job,
         task_id,
         prompt,
@@ -829,7 +841,7 @@ def execute_task(task_id: str):
             raise HTTPException(409, f"任务状态 {task['status']} 不可执行（仅 ready 待确认状态可执行）")
     finally:
         conn.close()
-    _executor.submit(_execute_job, task_id)
+    _executor_slow.submit(_execute_job, task_id)
     return {"ok": True, "task_id": task_id}
 
 
@@ -877,7 +889,7 @@ def resume_task(task_id: str):
             raise HTTPException(409, f"任务状态 {task['status']} 不可恢复（仅 running 中断态可恢复）")
     finally:
         conn.close()
-    _executor.submit(_resume_job, task_id)
+    _executor_slow.submit(_resume_job, task_id)
     return {"ok": True, "task_id": task_id}
 
 
@@ -898,7 +910,7 @@ def retry_subtask(task_id: str, subtask_id: str):
         conn.close()
     if not st or st["task_id"] != task_id:
         raise HTTPException(404, "子任务不存在")
-    _executor.submit(_retry_job, subtask_id)
+    _executor_slow.submit(_retry_job, subtask_id)
     return {"ok": True, "subtask_id": subtask_id}
 
 
@@ -1282,6 +1294,19 @@ _main_loop: asyncio.AbstractEventLoop | None = None
 async def _capture_main_loop():
     global _main_loop
     _main_loop = asyncio.get_running_loop()
+
+
+@app.on_event("startup")
+async def _prune_old_events():
+    """启动时清理 30 天前的任务事件（task_events 无限增长的保留策略）。"""
+    try:
+        conn = db.init_db()
+        try:
+            db.prune_old_events(conn, days=30)
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 — 清理失败不影响启动
+        pass
 
 
 # ---- 审批实时推送：注册 sandbox 钩子（用户不用再等 2s 轮询，命令 120s 就超时）----

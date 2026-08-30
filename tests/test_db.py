@@ -113,3 +113,25 @@ def test_cancelled_is_valid_status(tmp_db):
     db.create_task(tmp_db, "tcv", "p")
     db.set_task_status(tmp_db, "tcv", db.CANCELLED)  # 不抛 ValueError
     assert db.get_task(tmp_db, "tcv")["status"] == db.CANCELLED
+
+
+def test_prune_old_events(tmp_db):
+    """30 天前的事件被清理，近期保留。"""
+    from datetime import UTC, datetime, timedelta
+
+    # 直接插一条 40 天前的 + 一条新的
+    import json
+
+    old_ts = (datetime.now(UTC) - timedelta(days=40)).isoformat()
+    tmp_db.execute(
+        "INSERT INTO task_events (task_id, subtask_id, ts, event, data) VALUES (?,?,?,?,?)",
+        ("t_old", None, old_ts, "old", None),
+    )
+    tmp_db.commit()
+    db.log_event(tmp_db, "t_new", "fresh event")
+    n = db.prune_old_events(tmp_db, days=30)
+    assert n >= 1
+    rows = tmp_db.execute("SELECT task_id FROM task_events").fetchall()
+    ids = {r[0] for r in rows}
+    assert "t_old" not in ids
+    assert "t_new" in ids

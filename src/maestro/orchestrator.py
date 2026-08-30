@@ -83,9 +83,14 @@ def _execute_subtask(db_path: str, task_id: str, subtask: dict, timeout: int, mo
         res = worker.spawn(subtask["desc"], str(workdir), timeout, task_id=task_id, subtask_id=sid)
 
         if res.timed_out or res.returncode != 0 or res.error:
-            # 重试 1 次（task_id/subtask_id 必须带上：embedded 的审批流靠它归属审批单）
-            db.log_event(tconn, task_id, f"subtask {sid} failed, retrying", sid, data={"error": _err_msg(res)})
-            res = worker.spawn(subtask["desc"], str(workdir), timeout, task_id=task_id, subtask_id=sid)
+            if _is_retryable_worker_error(res):
+                # 仅瞬时故障（超时/网络/限流/5xx）重试 1 次；永久失败不重跑，避免重复计费
+                # （task_id/subtask_id 必须带上：embedded 的审批流靠它归属审批单）
+                db.log_event(tconn, task_id, f"subtask {sid} failed, retrying", sid, data={"error": _err_msg(res)})
+                res = worker.spawn(subtask["desc"], str(workdir), timeout, task_id=task_id, subtask_id=sid)
+            else:
+                db.log_event(tconn, task_id, f"subtask {sid} failed (permanent, no retry)", sid,
+                             data={"error": _err_msg(res)})
 
         if res.timed_out or res.returncode != 0 or res.error:
             db.set_subtask_output(tconn, sid, db.FAILED, error=_err_msg(res))
@@ -112,6 +117,21 @@ def _execute_subtask(db_path: str, task_id: str, subtask: dict, timeout: int, mo
             pass
     finally:
         tconn.close()
+
+
+# 可重试的子任务失败关键词：超时/网络/上游限流/5xx 是瞬时故障，值得重跑一次；
+# 其余（bin 不存在、参数错误、业务失败）是永久失败，重跑只会再烧一遍钱。
+_RETRYABLE_ERR_HINTS = (
+    "timeout", "超时", "timed out", "connection", "网络", "rate limit", "429",
+    "500", "502", "503", "504", "temporar", "server error", "上游",
+)
+
+
+def _is_retryable_worker_error(res) -> bool:
+    if res.timed_out:
+        return True
+    text = ((res.error or "") + " " + (res.output or "")).lower()
+    return any(hint in text for hint in _RETRYABLE_ERR_HINTS)
 
 
 def _err_msg(res) -> str:
