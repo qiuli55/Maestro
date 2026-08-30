@@ -1,0 +1,23 @@
+{
+  "_comment": "内置技能目录：任务卡片可勾选的能力。snippet 会在编排时附加到该卡片的子任务指令里。用户自建技能存 SQLite（user_skills 表），同名时用户技能覆盖内置。",
+  "skills": [
+    {"id": "code-gen",   "name": "代码生成", "category": "代码", "snippet": "具备代码生成能力：可编写、解释并优化代码，输出带必要注释、可直接运行的代码。"},
+    {"id": "code-review","name": "代码评审", "category": "代码", "snippet": "以资深工程师视角审查代码：正确性、边界条件、性能、可读性，逐条给出问题与修改建议。"},
+    {"id": "python",     "name": "Python",  "category": "代码", "snippet": "优先使用 Python 完成任务，输出完整可运行脚本并说明运行方式。"},
+    {"id": "frontend",   "name": "前端开发", "category": "代码", "snippet": "具备前端开发能力：HTML/CSS/JS、响应式布局与基础交互实现。"},
+    {"id": "sql",        "name": "SQL",     "category": "数据", "snippet": "可编写 SQL 查询，解释执行计划并给出索引建议。"},
+    {"id": "word-doc",   "name": "Word 文档","category": "文档", "snippet": "可产出结构化 Word 文档内容：封面、目录、章节、表格，以 Markdown 输出便于转 docx。"},
+    {"id": "excel",      "name": "Excel 表格","category": "文档", "snippet": "可设计 Excel 表格结构、公式与数据组织方式。"},
+    {"id": "ppt",        "name": "PPT 大纲", "category": "文档", "snippet": "可产出 PPT 页级大纲：每页标题、核心要点与视觉呈现建议。"},
+    {"id": "report",     "name": "报告撰写", "category": "文档", "snippet": "擅长结构化报告撰写：背景、分析、结论、建议，语言精炼有据。"},
+    {"id": "translate",  "name": "翻译",    "category": "文档", "snippet": "可高质量中英互译，保留专业术语与原文语气。"},
+    {"id": "ui-design",  "name": "UI 设计", "category": "设计", "snippet": "具备 UI/UX 设计能力：布局、配色、组件规范，可输出设计要点与规范。"},
+    {"id": "poster",     "name": "海报设计", "category": "设计", "snippet": "擅长海报/视觉设计：构图、文案、色彩方案与素材建议。"},
+    {"id": "logo",       "name": "Logo 创意","category": "设计", "snippet": "可产出 Logo 创意方向：寓意、图形思路与配色方案。"},
+    {"id": "video-cut",  "name": "视频剪辑", "category": "视频", "snippet": "具备视频剪辑知识：脚本分镜、节奏、转场与字幕时间轴建议。"},
+    {"id": "subtitle",   "name": "字幕生成", "category": "视频", "snippet": "可为视频产出分段字幕，含时间码建议。"},
+    {"id": "tts",        "name": "配音脚本", "category": "音频", "snippet": "可撰写配音脚本：语气、停顿与情绪标注。"},
+    {"id": "chart",      "name": "数据图表", "category": "数据", "snippet": "可将数据整理为合适图表并解读趋势与异常。"},
+    {"id": "research",   "name": "网络调研", "category": "网络", "snippet": "具备调研能力：多来源交叉验证，标注信息出处与置信度。"}
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "_comment": "工作流库：任务处理模板。scenario: a=按行拆分(串行) b=LLM拆段 c=LLM拆步骤(并行) auto=识别路由；workers=默认智能体（发往前端可改）；model=null 用全局默认；confirm=true 拆分后停人工闸门；no_merge=true 各子任务独立产出不汇总",
+  "workflows": [
+    {
+      "id": "standard",
+      "name": "标准编排",
+      "icon": "🎼",
+      "desc": "自动识别输入类型，拆分 → 派发 → 汇总",
+      "scenario": "auto",
+      "parallel": true,
+      "workers": ["embedded"],
+      "model": null,
+      "confirm": false,
+      "no_merge": false
+    },
+    {
+      "id": "deep-research",
+      "name": "深度研究",
+      "icon": "🔍",
+      "desc": "LLM 拆解步骤 → 并行调研 → 汇总 + 审计",
+      "scenario": "c",
+      "parallel": true,
+      "workers": ["embedded"],
+      "model": null,
+      "confirm": false,
+      "no_merge": false
+    },
+    {
+      "id": "quick-single",
+      "name": "快速单发",
+      "icon": "⚡",
+      "desc": "不拆分不汇总，单 agent 一步到位",
+      "scenario": "a",
+      "parallel": false,
+      "workers": ["embedded"],
+      "model": null,
+      "confirm": false,
+      "no_merge": true
+    },
+    {
+      "id": "multi-agent",
+      "name": "多智能体流水线",
+      "icon": "🎭",
+      "desc": "段落轮发给多个 agent，汇总时裁决冲突",
+      "scenario": "b",
+      "parallel": true,
+      "workers": ["embedded", "opencode"],
+      "model": null,
+      "confirm": false,
+      "no_merge": false
+    },
+    {
+      "id": "deep-review",
+      "name": "深度评审",
+      "icon": "🔬",
+      "desc": "推理模型串行深读，适合代码/方案评审",
+      "scenario": "b",
+      "parallel": false,
+      "workers": ["embedded"],
+      "model": "deepseek:deepseek-reasoner",
+      "confirm": false,
+      "no_merge": false
+    },
+    {
+      "id": "hitl-pipeline",
+      "name": "人工确认流水线",
+      "icon": "🛂",
+      "desc": "拆分后停在待确认，人工编辑子任务再执行",
+      "scenario": "c",
+      "parallel": true,
+      "workers": ["embedded"],
+      "model": null,
+      "confirm": true,
+      "no_merge": false
+    }
+  ]
+}

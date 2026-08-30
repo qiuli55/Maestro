@@ -187,6 +187,86 @@
   #merge-btn{border:none;background:rgba(90,105,175,.15);color:#4d5ca5;font-size:12px;
     padding:7px 12px;border-radius:8px;cursor:pointer;white-space:nowrap}
   #merge-btn:hover{background:rgba(90,105,175,.3)}
+  /* ===== 工作流可视化编排器 ===== */
+  #workflow-select{flex:0 0 150px;min-width:0;padding:4px 8px;border-radius:7px;
+    border:1.5px solid rgba(91,107,181,.3);background:rgba(245,247,255,.8);
+    font-size:12px;color:#33334f;cursor:pointer;outline:none}
+  #wf-open-builder{border:none;background:rgba(90,105,175,.15);color:#4d5ca5;font-size:11.5px;
+    padding:4px 9px;border-radius:7px;cursor:pointer;white-space:nowrap}
+  #wf-open-builder:hover{background:rgba(90,105,175,.3)}
+  #wf-builder{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:880px;max-width:95vw;
+    max-height:84vh;background:rgba(250,251,255,.98);border:1px solid rgba(80,90,140,.3);border-radius:16px;
+    box-shadow:0 12px 48px rgba(40,50,100,.35);z-index:1000;display:none;flex-direction:column;
+    padding:14px;backdrop-filter:blur(10px);font-family:"Segoe UI","PingFang SC",sans-serif}
+  #wf-builder.show{display:flex}
+  .wfb-head{display:flex;gap:8px;align-items:center;font-weight:600;color:#33334f;font-size:14px}
+  #wfb-name{flex:0 1 200px;border:1px solid rgba(80,90,140,.3);border-radius:8px;padding:5px 10px;
+    font-size:13px;outline:none;min-width:0}
+  #wfb-name:focus{border-color:#5b6bb5}
+  .wfb-head .wfb-btn{border:none;background:#5b6bb5;color:#fff;font-size:12px;padding:6px 14px;
+    border-radius:8px;cursor:pointer;font-weight:600}
+  .wfb-head .wfb-btn.ghost{background:rgba(90,105,175,.12);color:#4d5ca5}
+  .wfb-head .wfb-btn:hover{filter:brightness(1.08)}
+  #wfb-close{border:none;background:transparent;font-size:20px;color:#8888a8;cursor:pointer;
+    line-height:1;padding:0 4px}
+  #wfb-close:hover{color:#4d5ca5}
+  .wfb-hint{font-size:11px;color:#9a9ab8;margin-top:6px}
+  .wfb-loadrow{display:flex;gap:6px;align-items:center;margin-top:6px;font-size:11.5px;color:#55557a}
+  #wfb-load{border:1.5px solid rgba(91,107,181,.3);border-radius:7px;padding:3px 8px;font-size:11.5px;
+    color:#33334f;background:rgba(245,247,255,.8);max-width:260px}
+  .wfb-stages{display:flex;gap:10px;overflow-x:auto;padding:12px 2px;flex:1;min-height:280px;align-items:stretch}
+  .wfb-stage{min-width:225px;max-width:265px;flex:1;border:2px solid var(--stc);border-radius:12px;
+    background:#fff;display:flex;flex-direction:column;overflow:hidden}
+  .wfb-stage-head{background:var(--stc);color:#fff;padding:6px 8px;font-size:12.5px;font-weight:600;
+    display:flex;justify-content:space-between;align-items:center;gap:4px}
+  .wfb-stage-head input{flex:1;min-width:0;background:transparent;border:none;outline:none;color:#fff;
+    font-size:12.5px;font-weight:600;font-family:inherit}
+  .wfb-stage-head input::placeholder{color:rgba(255,255,255,.7)}
+  .wfb-stage-del{border:none;background:rgba(255,255,255,.2);color:#fff;width:18px;height:18px;
+    border-radius:5px;cursor:pointer;font-size:11px;line-height:1;flex:none}
+  .wfb-stage-del:hover{background:rgba(255,255,255,.35)}
+  .wfb-stage-cards{flex:1;display:flex;flex-direction:column;gap:6px;padding:8px;overflow-y:auto}
+  .wf-card{position:relative;border:1.5px solid var(--stc);border-radius:10px;padding:8px 10px 8px 12px;
+    cursor:pointer;background:#fff;transition:opacity .18s,filter .18s,box-shadow .18s}
+  .wf-card.on{box-shadow:0 2px 10px rgba(40,50,100,.12)}
+  .wf-card.off{opacity:.42;filter:grayscale(.65)}
+  .wf-card.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--stc);
+    border-radius:10px 0 0 10px}
+  .wc-title{font-size:12px;font-weight:600;color:#33334f;word-break:break-all;max-height:48px;
+    overflow:hidden;line-height:1.4;padding-right:44px}
+  .wc-meta{font-size:10px;color:#7a7aa8;margin-top:3px;display:flex;gap:4px;flex-wrap:wrap;align-items:center}
+  .wc-skill{background:rgba(91,107,181,.12);border-radius:4px;padding:0 5px}
+  .wc-ops{position:absolute;top:5px;right:5px;display:flex;gap:2px}
+  .wc-ops button{width:20px;height:20px;border:none;border-radius:5px;cursor:pointer;font-size:11px;
+    line-height:1;background:rgba(90,105,175,.1);color:#4d5ca5}
+  .wc-ops button:hover{background:rgba(90,105,175,.25)}
+  .wc-ops .wc-del{color:#d64545;background:rgba(214,69,69,.08)}
+  .wc-ops .wc-del:hover{background:rgba(214,69,69,.2)}
+  .wc-config{display:none;margin-top:7px;border-top:1px dashed rgba(80,90,140,.2);padding-top:7px;
+    font-size:11.5px;color:#55557a;cursor:default}
+  .wf-card.configuring .wc-config{display:block}
+  .wc-lrow{display:flex;gap:5px;margin:4px 0;align-items:center}
+  .wc-lrow .wl{flex:none;font-size:10.5px;color:#7a7aa8;width:34px}
+  .wc-lrow select{flex:1;min-width:0;border:1.5px solid rgba(91,107,181,.3);border-radius:6px;
+    padding:2px 5px;font-size:11px;color:#33334f;background:rgba(245,247,255,.85);outline:none}
+  .wc-desc{width:100%;border:1px solid rgba(80,90,140,.3);border-radius:6px;font-size:11.5px;
+    padding:5px;resize:vertical;min-height:44px;font-family:inherit;outline:none;box-sizing:border-box}
+  .wc-desc:focus{border-color:#5b6bb5}
+  .skill-chips{display:flex;flex-wrap:wrap;gap:3px;margin:4px 0 2px}
+  .skill-chip{font-size:10px;border-radius:6px;padding:1px 6px;color:#fff;cursor:pointer;user-select:none}
+  .skill-chip:hover{filter:brightness(1.15)}
+  .skill-add{display:flex;gap:3px;margin-top:3px}
+  .skill-add input{flex:1;min-width:0;border:1px solid rgba(80,90,140,.3);border-radius:5px;
+    font-size:11px;padding:2px 6px;outline:none}
+  .skill-add input:focus{border-color:#5b6bb5}
+  .skill-add button{border:none;background:rgba(90,105,175,.15);color:#4d5ca5;font-size:10.5px;
+    padding:2px 8px;border-radius:5px;cursor:pointer;white-space:nowrap}
+  .wfb-addcard{border:1.5px dashed var(--stc);border-radius:10px;padding:6px;color:var(--stc);
+    background:transparent;cursor:pointer;font-size:11.5px}
+  .wfb-addcard:hover{background:rgba(91,107,181,.05)}
+  #wfb-add-stage{margin:8px 2px 0;border:1.5px dashed rgba(91,107,181,.4);border-radius:10px;
+    padding:8px;color:#5b6bb5;background:transparent;cursor:pointer;font-size:12px;font-weight:600}
+  #wfb-add-stage:hover{background:rgba(91,107,181,.06)}
   /* ===== 跨对话上下文关联 ===== */
   .win-links{display:none;flex-wrap:wrap;gap:4px;padding:5px 10px;align-items:center;
     border-bottom:1px solid rgba(80,90,140,.12);background:rgba(91,107,181,.06);
@@ -466,6 +546,11 @@
     </div>
     <!-- 多 agent 选择（任务模式） -->
     <div class="agent-selector" id="agent-selector">
+      <div class="model-row" id="wf-row" style="display:none">
+        <span class="model-label">工作流</span>
+        <select id="workflow-select"></select>
+        <button id="wf-open-builder" type="button" title="可视化编排：环节→卡片，点卡片亮/暗，⚙ 配置智能体/模型/任务/技能">🧩 编排</button>
+      </div>
       <div class="agent-chips" id="agent-chips"></div>
       <div class="model-row" id="model-row" style="display:none">
         <span class="model-label">模型</span>
@@ -488,6 +573,22 @@
 <div id="history-panel">
   <div class="hp-head"><span id="hp-title">历史对话</span><button class="hp-close" id="history-close">×</button></div>
   <div class="hp-list" id="history-list"></div>
+</div>
+<div id="wf-builder">
+  <div class="wfb-head">
+    <span>🧩 工作流编排</span>
+    <input id="wfb-name" placeholder="工作流名称">
+    <button class="wfb-btn" id="wfb-save" type="button">保存</button>
+    <button class="wfb-btn" id="wfb-run" type="button">▶ 运行</button>
+    <button id="wfb-close" type="button" title="关闭">×</button>
+  </div>
+  <div class="wfb-hint">点卡片：亮=启用（工作流走这张卡）· 暗=停用；⚙ 配置智能体/模型/任务/技能；卡片按环节顺序执行，同环节多卡片=并行分工</div>
+  <div class="wfb-loadrow">
+    <span>载入：</span>
+    <select id="wfb-load"><option value="">— 选择模板或已保存的工作流 —</option></select>
+  </div>
+  <div class="wfb-stages" id="wfb-stages"></div>
+  <button id="wfb-add-stage" type="button">＋ 添加环节</button>
 </div>
 <div id="maestro" onclick="toggleList(event)">
   <div class="m-card">
@@ -1763,6 +1864,7 @@
     loadConvs(m);
     winSelectRender(); // 更新窗口选择器的"新建"选项
     document.getElementById("agent-selector").className="agent-selector"+(m==="task"?" visible":"");
+    document.getElementById("wf-row").style.display=m==="task"?"flex":"none";
     dockInput.focus();
   }
   for(var i=0;i<dockTabs.length;i++)(function(t){t.addEventListener("click",function(){setMode(t.getAttribute("data-mode"))})})(dockTabs[i]);
@@ -1893,16 +1995,22 @@
           }
         });
     }else{
-      // 任务模式：派发任务
+      // 任务模式：派发任务（选中工作流 → 服务端按预设/卡片展开；未选中 → auto）
       var selectedAgents=Array.from(document.querySelectorAll("#agent-chips .agent-chip.selected"))
         .map(function(ch){return ch.dataset.name});
       if(selectedAgents.length===0)selectedAgents=["embedded"];
       var selectedModel=document.getElementById("model-select").value||null;
-      fetch(MAESTRO+"/api/tasks",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:v,scenario:"auto",confirm:false,conv_id:targetId,selected_workers:selectedAgents,model:selectedModel})})
+      var wfSel=document.getElementById("workflow-select");
+      var wfId=(wfSel&&wfSel.value)||null;
+      var wfLabel=(wfSel&&wfSel.selectedIndex>=0)?wfSel.options[wfSel.selectedIndex].text.split(" ")[0]:"";
+      var reqBody={prompt:v,conv_id:targetId,workflow:wfId,selected_workers:selectedAgents,model:selectedModel};
+      if(!wfId){reqBody.scenario="auto";reqBody.confirm=false;}
+      fetch(MAESTRO+"/api/tasks",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(reqBody)})
         .then(function(r){return r.json()})
         .then(function(d){
           var taskId=d.task_id;
           var agents=d.selected_workers&&d.selected_workers.length>0?d.selected_workers:["embedded"];
+          if(d.workflow&&wfLabel)agents=[wfLabel].concat(agents);
           if(taskId){
             // 富任务卡片：状态/进度/子任务/结果自带轮询
             winAppendTaskCard(targetId,taskId,agents,d.model||null,v);
@@ -1947,6 +2055,10 @@
       }).catch(function(){});
     }
     loadAgents();
+    // agent 列表同时喂给工作流编排器（卡片配置下拉用）
+    fetch(MAESTRO+"/api/agents").then(function(r){return r.json()}).then(function(list){
+      if(window.__setWfAgents)window.__setWfAgents(list||[]);
+    }).catch(function(){});
     // 加载模型列表
     var _modelsCache=null;
     function loadModels(){
@@ -1979,6 +2091,365 @@
       }).catch(function(){document.getElementById("model-row").style.display="none"});
     }
     loadModels();
+
+  // ========== 工作流：选择器 + 可视化卡片编排器 ==========
+  var wfLibCache=[];   // /api/workflows（preset+user）
+  var wfSkillLib={};   // name -> {category,snippet}
+  var wfAgentsCache=[];// /api/agents
+  var convWf={};       // convId -> workflowId（每会话记忆）
+  if(!window.__setWfAgents)window.__setWfAgents=function(list){wfAgentsCache=list||[]};
+  try{convWf=JSON.parse(localStorage.getItem("maestro_conv_wf")||"{}")||{}}catch(e){convWf={}}
+  var WF_COLORS=["#5b8def","#34c98e","#f0a24b","#a06bf0","#e0679a","#43bcd6","#8b9c68","#d67171"];
+  var SKILL_COLORS={"设计":"#e0679a","代码":"#5b8def","文档":"#34c98e","视频":"#f0a24b",
+    "音频":"#a06bf0","数据":"#43bcd6","图像":"#8b9c68","网络":"#d67171","通用":"#9aa3b8"};
+  var wfState={stages:[]};
+  var wfEditingId=null;
+  var wfBuilderOpen=false;
+
+  function saveConvWf(){try{localStorage.setItem("maestro_conv_wf",JSON.stringify(convWf))}catch(e){}}
+
+  function loadWorkflows(){
+    return fetch(MAESTRO+"/api/workflows").then(function(r){return r.json()}).then(function(list){
+      wfLibCache=list||[];
+      var sel=document.getElementById("workflow-select");
+      if(!sel)return wfLibCache;
+      var cur=sel.value;
+      var htmlOpt="";
+      var presets=wfLibCache.filter(function(w){return w.source==="preset"});
+      var users=wfLibCache.filter(function(w){return w.source==="user"});
+      if(presets.length){
+        htmlOpt+='<optgroup label="预设">';
+        presets.forEach(function(w){htmlOpt+='<option value="'+w.id+'">'+w.icon+" "+w.name+'</option>';});
+        htmlOpt+="</optgroup>";
+      }
+      if(users.length){
+        htmlOpt+='<optgroup label="我的工作流">';
+        users.forEach(function(w){htmlOpt+='<option value="'+w.id+'">🧩 '+escapeHtml(w.name)+'</option>';});
+        htmlOpt+="</optgroup>";
+      }
+      sel.innerHTML=htmlOpt;
+      // 恢复当前会话的记忆；否则默认标准编排
+      var saved=selectedWinId&&convWf[selectedWinId];
+      if(saved&&sel.querySelector('option[value="'+saved+'"]'))sel.value=saved;
+      else if(sel.querySelector('option[value="standard"]'))sel.value="standard";
+      return wfLibCache;
+    }).catch(function(){return []});
+  }
+
+  function loadSkillLib(){
+    return fetch(MAESTRO+"/api/skills").then(function(r){return r.json()}).then(function(list){
+      wfSkillLib={};
+      (list||[]).forEach(function(s){wfSkillLib[s.name]={category:s.category,snippet:s.snippet,id:s.id,source:s.source};});
+      return wfSkillLib;
+    }).catch(function(){return {}});
+  }
+
+  // 工作流选择变化：记到当前会话 + 预设默认铺到 agent chips / 模型
+  function onWorkflowChange(){
+    var sel=document.getElementById("workflow-select");
+    if(selectedWinId){convWf[selectedWinId]=sel.value||null;saveConvWf();}
+    var wf=wfLibCache.filter(function(w){return w.id===sel.value})[0];
+    if(wf&&wf.source==="preset"){
+      document.querySelectorAll("#agent-chips .agent-chip").forEach(function(chip){
+        var want=wf.workers.indexOf(chip.dataset.name)>=0&&!chip.classList.contains("disabled");
+        chip.classList.toggle("selected",want);
+        var cb=chip.querySelector("input");if(cb)cb.checked=want;
+      });
+      if(wf.model){
+        var ms=document.getElementById("model-select");
+        if(ms&&ms.querySelector('option[value="'+wf.model+'"]'))ms.value=wf.model;
+      }
+    }
+  }
+
+  // ===== 可视化编排器 =====
+  function wfNewCard(){
+    return {id:"card_"+Date.now()+"_"+Math.random().toString(36).slice(2,6),
+      enabled:true,desc:"",worker:"embedded",model:null,skills:[]};
+  }
+  function wfOpen(){
+    var b=document.getElementById("wf-builder");
+    b.classList.add("show");
+    wfBuilderOpen=true;
+    loadSkillLib();
+    if(!wfState.stages.length){
+      // 空骨架：两个环节各一张卡
+      wfState.stages=[
+        {name:"环节 1",cards:[wfNewCard()]},
+        {name:"环节 2",cards:[wfNewCard()]}
+      ];
+      wfState.stages[0].cards[0].desc="负责什么任务（例如：收集资料并整理要点）";
+    }
+    // 载入下拉：预设 + 已保存
+    var load=document.getElementById("wfb-load");
+    var opts='<option value="">— 选择模板或已保存的工作流 —</option>';
+    wfLibCache.forEach(function(w){
+      opts+='<option value="'+w.id+'">'+(w.source==="user"?"🧩 ":"")+w.icon+" "+escapeHtml(w.name)+'</option>';
+    });
+    load.innerHTML=opts;
+    renderWfBuilder();
+  }
+  function closeWfBuilder(){
+    document.getElementById("wf-builder").classList.remove("show");
+    wfBuilderOpen=false;
+  }
+  function renderWfBuilder(){
+    var wrap=document.getElementById("wfb-stages");
+    wrap.innerHTML="";
+    wfState.stages.forEach(function(st,si){
+      var color=WF_COLORS[si%WF_COLORS.length];
+      var stageEl=document.createElement("div");
+      stageEl.className="wfb-stage";
+      stageEl.style.setProperty("--stc",color);
+      var head=document.createElement("div");
+      head.className="wfb-stage-head";
+      head.innerHTML='<input value="'+escapeHtml(st.name)+'" placeholder="环节名" data-si="'+si+'">'+
+        '<button class="wfb-stage-del" data-si="'+si+'" title="删除环节">×</button>';
+      var cardsEl=document.createElement("div");
+      cardsEl.className="wfb-stage-cards";
+      st.cards.forEach(function(c,ci){cardsEl.appendChild(wfCardEl(si,ci,color));});
+      var addBtn=document.createElement("button");
+      addBtn.className="wfb-addcard";
+      addBtn.type="button";
+      addBtn.textContent="＋ 添加卡片";
+      addBtn.addEventListener("click",function(){
+        st.cards.push(wfNewCard());
+        renderWfBuilder();
+      });
+      cardsEl.appendChild(addBtn);
+      stageEl.appendChild(head);
+      stageEl.appendChild(cardsEl);
+      wrap.appendChild(stageEl);
+    });
+    // 事件绑定（重建后）
+    wrap.querySelectorAll(".wfb-stage-head input").forEach(function(inp){
+      inp.addEventListener("input",function(){wfState.stages[+inp.dataset.si].name=inp.value;});
+    });
+    wrap.querySelectorAll(".wfb-stage-del").forEach(function(btn){
+      btn.addEventListener("click",function(){
+        var si=+btn.dataset.si;
+        if(wfState.stages.length<=1){showReply("至少保留一个环节",1800);return;}
+        wfState.stages.splice(si,1);
+        renderWfBuilder();
+      });
+    });
+  }
+  function wfCardEl(si,ci,color){
+    var c=wfState.stages[si].cards[ci];
+    var card=document.createElement("div");
+    card.className="wf-card "+(c.enabled?"on":"off")+(c._open?" configuring":"");
+    card.dataset.si=si;card.dataset.ci=ci;
+    card.style.setProperty("--stc",color);
+    var skillHtml=(c.skills||[]).map(function(sn){
+      var cat=wfSkillLib[sn]&&wfSkillLib[sn].category||"通用";
+      return '<span class="wc-skill skill-chip" data-rmskill="'+escapeHtml(sn)+'" style="background:'+(SKILL_COLORS[cat]||SKILL_COLORS["通用"])+'" title="点击移除">'+escapeHtml(sn)+'</span>';
+    }).join("");
+    var workerOpts="";
+    wfAgentsCache.forEach(function(a){
+      workerOpts+='<option value="'+a.name+'"'+(c.worker===a.name?" selected":"")+'>'+a.label+'</option>';
+    });
+    var modelOpts='<option value="">默认模型</option>';
+    (window.__modelsCache||[]).forEach(function(m){
+      modelOpts+='<option value="'+m.id+'"'+(c.model===m.id?" selected":"")+'>'+escapeHtml(m.label)+'</option>';
+    });
+    card.innerHTML=
+      '<div class="wc-title">'+(c.desc?escapeHtml(c.desc):'<span style="color:#b6bcd8">（未填写任务）</span>')+'</div>'+
+      '<div class="wc-meta"><span>'+escapeHtml(wfAgentLabel(c.worker))+'</span>'+
+        (c.model?"<span>· "+escapeHtml(c.model)+"</span>":"")+(skillHtml?"<span>·</span>"+skillHtml:"")+'</div>'+
+      '<div class="wc-ops">'+
+        '<button class="wc-set" type="button" title="配置">⚙</button>'+
+        '<button class="wc-del" type="button" title="删除卡片">×</button>'+
+      '</div>'+
+      '<div class="wc-config">'+
+        '<div class="wc-lrow"><span class="wl">智能体</span><select class="wc-worker">'+workerOpts+'</select>'+
+          '<span class="wl">模型</span><select class="wc-model">'+modelOpts+'</select></div>'+
+        '<textarea class="wc-desc" placeholder="这张卡片负责什么任务（会与你的主输入合并）">'+escapeHtml(c.desc)+'</textarea>'+
+        '<div class="skill-chips">'+(c.skills&&c.skills.length?"":"<span style='color:#b6bcd8;font-size:10px'>尚未选择技能</span>")+'</div>'+
+        '<div class="skill-add"><input placeholder="输入技能名，回车自动分类"><button type="button">添加</button></div>'+
+      '</div>';
+    // —— 交互 ——
+    card.addEventListener("click",function(e){
+      if(e.target.closest(".wc-ops")||e.target.closest(".wc-config")||e.target.closest(".skill-chip"))return;
+      c.enabled=!c.enabled;
+      card.classList.toggle("on",c.enabled);
+      card.classList.toggle("off",!c.enabled);
+    });
+    card.querySelector(".wc-set").addEventListener("click",function(e){
+      e.stopPropagation();
+      c._open=!c._open;
+      card.classList.toggle("configuring",c._open);
+    });
+    card.querySelector(".wc-del").addEventListener("click",function(e){
+      e.stopPropagation();
+      wfState.stages[si].cards.splice(ci,1);
+      renderWfBuilder();
+    });
+    var ta=card.querySelector(".wc-desc");
+    ta.addEventListener("input",function(){
+      c.desc=ta.value;
+      card.querySelector(".wc-title").textContent=c.desc||"（未填写任务）";
+    });
+    card.querySelector(".wc-worker").addEventListener("change",function(e){c.worker=e.target.value;updateCardMeta();});
+    card.querySelector(".wc-model").addEventListener("change",function(e){c.model=e.target.value||null;updateCardMeta();});
+    function updateCardMeta(){
+      var meta=card.querySelector(".wc-meta");
+      meta.innerHTML='<span>'+escapeHtml(wfAgentLabel(c.worker))+'</span>'+
+        (c.model?"<span>· "+escapeHtml(c.model)+"</span>":"")+
+        ((c.skills||[]).length?"<span>·</span>":"");
+      (c.skills||[]).forEach(function(sn){
+        var cat=wfSkillLib[sn]&&wfSkillLib[sn].category||"通用";
+        var sp=document.createElement("span");
+        sp.className="wc-skill skill-chip";
+        sp.style.background=SKILL_COLORS[cat]||SKILL_COLORS["通用"];
+        sp.title="点击移除";
+        sp.textContent=sn;
+        sp.dataset.rmskill=sn;
+        meta.appendChild(sp);
+      });
+    }
+    card.querySelectorAll(".skill-chip[data-rmskill]").forEach(function(ch){
+      ch.addEventListener("click",function(e){
+        e.stopPropagation();
+        var name=ch.dataset.rmskill;
+        c.skills=(c.skills||[]).filter(function(x){return x!==name;});
+        renderWfBuilder();
+      });
+    });
+    var addBtn=card.querySelector(".skill-add button");
+    var addInput=card.querySelector(".skill-add input");
+    function doAdd(){
+      var name=(addInput.value||"").trim();
+      if(!name)return;
+      if((c.skills||[]).indexOf(name)>=0){addInput.value="";return;}
+      fetch(MAESTRO+"/api/skills",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({name:name})})
+        .then(function(r){return r.json()})
+        .then(function(s){
+          if(!s||!s.name){showReply("技能添加失败："+((s&&s.detail)||""),2500);return;}
+          wfSkillLib[s.name]={category:s.category,snippet:s.snippet,id:s.id,source:s.source};
+          c.skills=c.skills||[];
+          if(c.skills.indexOf(s.name)<0)c.skills.push(s.name);
+          renderWfBuilder();
+        })
+        .catch(function(){showReply("技能添加失败：服务未连接",2500)});
+    }
+    addBtn.addEventListener("click",doAdd);
+    addInput.addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();doAdd();}});
+    return card;
+  }
+  function wfAgentLabel(name){
+    var a=wfAgentsCache.filter(function(x){return x.name===name})[0];
+    return a?a.label:(name||"embedded");
+  }
+  function wfCollectSubtasks(){
+    var subs=[];
+    wfState.stages.forEach(function(st){
+      st.cards.forEach(function(c){
+        if(!c.enabled)return;
+        var desc=(c.desc||"").trim();
+        if(!desc)return;
+        subs.push({desc:"【"+st.name+"】"+desc,worker_type:c.worker||"embedded",
+          model:c.model||null,skills:(c.skills||[]).slice()});
+      });
+    });
+    return subs;
+  }
+  function wfSave(){
+    var name=document.getElementById("wfb-name").value.trim();
+    if(!name){showReply("先给工作流起个名字",2000);return;}
+    if(!wfState.stages.length){showReply("至少添加一个环节",2000);return;}
+    fetch(MAESTRO+"/api/workflows",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({id:wfEditingId,name:name,definition:{stages:wfState.stages}})})
+      .then(function(r){return r.json()})
+      .then(function(d){
+        if(d&&d.ok){
+          wfEditingId=d.id;
+          wfState.stages=d.stages;
+          renderWfBuilder();
+          showReply("工作流已保存 ✔",1800);
+          loadWorkflows();
+        }else{
+          showReply("保存失败："+((d&&d.detail)||"未知错误"),3000);
+        }
+      })
+      .catch(function(){showReply("保存失败：服务未连接",3000)});
+  }
+  function wfRun(){
+    var v=dockInput.value.trim();
+    if(!v){showReply("先在下方输入框描述这次要做的事，再点运行",2500);return;}
+    var subs=wfCollectSubtasks();
+    if(!subs.length){showReply("没有启用的卡片：点卡片点亮至少一张",2500);return;}
+    var doRun=function(convId){
+      fetch(MAESTRO+"/api/tasks",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({prompt:v,conv_id:convId,subtasks:subs,parallel:true,confirm:false})})
+        .then(function(r){return r.json()})
+        .then(function(d){
+          if(d&&d.task_id){
+            winAppendTaskCard(convId,d.task_id,
+              d.selected_workers&&d.selected_workers.length?d.selected_workers:["工作流"],null,v);
+            closeWfBuilder();
+            resetDockInput();
+          }else{
+            showReply("运行失败："+((d&&d.detail)||"未知错误"),3000);
+          }
+        })
+        .catch(function(){showReply("运行失败：服务未连接",3000)});
+    };
+    if(selectedWinId&&convMeta[selectedWinId]){
+      doRun(selectedWinId);
+    }else{
+      fetch(MAESTRO+"/api/conversations",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({title:document.getElementById("wfb-name").value.trim()||"工作流",kind:"task"})})
+        .then(function(r){return r.json()})
+        .then(function(d){
+          winCreateFromConv(d.conv_id,d.title||"工作流","task");
+          selectedWinId=d.conv_id;
+          doRun(d.conv_id);
+        })
+        .catch(function(){showReply("创建会话失败",2500)});
+    }
+  }
+  // 编排器事件绑定（静态元素）
+  document.getElementById("wfb-close").addEventListener("click",closeWfBuilder);
+  document.getElementById("wfb-save").addEventListener("click",wfSave);
+  document.getElementById("wfb-run").addEventListener("click",wfRun);
+  document.getElementById("wf-open-builder").addEventListener("click",function(){
+    if(!wfAgentsCache.length){
+      fetch(MAESTRO+"/api/agents").then(function(r){return r.json()}).then(function(list){
+        wfAgentsCache=list||[];wfOpen();
+      }).catch(function(){wfOpen();});
+    }else{wfOpen();}
+  });
+  document.getElementById("workflow-select").addEventListener("change",onWorkflowChange);
+  loadWorkflows(); // 启动时填充工作流下拉（忘了调用会导致下拉为空）
+  document.getElementById("wfb-load").addEventListener("change",function(e){
+    var id=e.target.value;
+    if(!id)return;
+    var wf=wfLibCache.filter(function(w){return w.id===id})[0];
+    if(!wf)return;
+    wfEditingId=wf.source==="user"?wf.id:null;
+    document.getElementById("wfb-name").value=wf.name;
+    if(wf.source==="user"){
+      // 用户工作流：取详情还原全部环节/卡片
+      fetch(MAESTRO+"/api/workflows/"+encodeURIComponent(id)).then(function(r){return r.json()})
+        .then(function(d){
+          if(d&&d.definition&&d.definition.stages){
+            wfState.stages=d.definition.stages.map(function(st){
+              return {name:st.name,cards:st.cards.map(function(c){
+                return {id:c.id,enabled:c.enabled,desc:c.desc,worker:c.worker,model:c.model,skills:(c.skills||[]).slice()};
+              })};
+            });
+            renderWfBuilder();
+          }
+        });
+    }else{
+      // 预设 → 单环节模板
+      wfState.stages=[{name:wf.name,cards:[{id:"card_"+Date.now(),enabled:true,
+        desc:wf.desc||"按预设执行："+wf.name,worker:(wf.workers&&wf.workers[0])||"embedded",
+        model:wf.model||null,skills:[]}]}];
+      renderWfBuilder();
+    }
+  });
 
   // 窗口选择下拉菜单
   var winSelectBtn=document.getElementById("win-select-btn");

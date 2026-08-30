@@ -115,6 +115,7 @@ def init_db(db_path: Path | str | None = None, *, use_cache: bool = False) -> sq
             idx             INTEGER NOT NULL,
             desc            TEXT NOT NULL,
             worker_type     TEXT NOT NULL,
+            model           TEXT,
             status          TEXT NOT NULL DEFAULT 'pending',
             output          TEXT,
             error           TEXT,
@@ -184,6 +185,7 @@ def init_db(db_path: Path | str | None = None, *, use_cache: bool = False) -> sq
     _ensure_task_columns(conn)
     _ensure_conv_column(conn)
     _ensure_conv_kind_column(conn)
+    _ensure_subtask_model_column(conn)
     _ensure_default_conversation(conn)
     # 索引（高频查询加速）。CREATE INDEX IF NOT EXISTS 已是幂等。
     # subtasks.task_id：每次执行任务都按 task_id 查子任务列表
@@ -259,6 +261,13 @@ def _ensure_default_conversation(conn: sqlite3.Connection):
     )
 
 
+def _ensure_subtask_model_column(conn: sqlite3.Connection):
+    """存量库补 subtasks.model 列（工作流卡片级模型）。"""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(subtasks)").fetchall()}
+    if "model" not in cols:
+        _safe_alter(conn, "ALTER TABLE subtasks ADD COLUMN model TEXT")
+
+
 def _ensure_conv_kind_column(conn: sqlite3.Connection):
     """存量库补 conversations.kind 列（chat/task，默认 chat）+ 按标题迁移旧数据。"""
     cols = {r[1] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
@@ -312,14 +321,15 @@ def add_subtasks(conn: sqlite3.Connection, task_id: str, subtasks: list[dict]) -
         return []
     now = _now()
     rows = [
-        (st["id"], task_id, idx, st["desc"], st["worker_type"], PENDING, st.get("source_segments"), now, now)
+        (st["id"], task_id, idx, st["desc"], st["worker_type"], PENDING,
+         st.get("source_segments"), st.get("model"), now, now)
         for idx, st in enumerate(subtasks)
     ]
     # executemany 一次 INSERT 多行，比循环单条 INSERT 快 ~10x
     conn.executemany(
         """INSERT INTO subtasks
-           (id, task_id, idx, desc, worker_type, status, source_segments, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
+           (id, task_id, idx, desc, worker_type, status, source_segments, model, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
         rows,
     )
     conn.commit()
@@ -529,6 +539,109 @@ def clear_chat_history(conn: sqlite3.Connection) -> None:
 
 
 # ---------- 会话（对话隔离） ----------
+
+
+# ---------- 用户自建工作流 / 技能（工作流编排器持久化） ----------
+
+
+def _ensure_workflow_tables(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_workflows (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL,
+            definition TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_skills (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL,
+            category   TEXT NOT NULL DEFAULT '通用',
+            snippet    TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def list_user_workflows(conn: sqlite3.Connection) -> list[dict]:
+    _ensure_workflow_tables(conn)
+    rows = conn.execute(
+        "SELECT * FROM user_workflows ORDER BY updated_at DESC"
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["definition"] = json.loads(d["definition"])
+        except json.JSONDecodeError:
+            d["definition"] = {"stages": []}
+        out.append(d)
+    return out
+
+
+def get_user_workflow(conn: sqlite3.Connection, wf_id: str) -> dict | None:
+    _ensure_workflow_tables(conn)
+    r = conn.execute("SELECT * FROM user_workflows WHERE id=?", (wf_id,)).fetchone()
+    if not r:
+        return None
+    d = dict(r)
+    try:
+        d["definition"] = json.loads(d["definition"])
+    except json.JSONDecodeError:
+        d["definition"] = {"stages": []}
+    return d
+
+
+def upsert_user_workflow(conn: sqlite3.Connection, wf_id: str, name: str, definition: dict) -> None:
+    _ensure_workflow_tables(conn)
+    now = _now()
+    conn.execute(
+        """INSERT INTO user_workflows (id, name, definition, created_at, updated_at)
+           VALUES (?,?,?,?,?)
+           ON CONFLICT(id) DO UPDATE SET name=excluded.name,
+             definition=excluded.definition, updated_at=excluded.updated_at""",
+        (wf_id, name, json.dumps(definition, ensure_ascii=False), now, now),
+    )
+    conn.commit()
+
+
+def delete_user_workflow(conn: sqlite3.Connection, wf_id: str) -> bool:
+    _ensure_workflow_tables(conn)
+    cur = conn.execute("DELETE FROM user_workflows WHERE id=?", (wf_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def list_user_skills(conn: sqlite3.Connection) -> list[dict]:
+    _ensure_workflow_tables(conn)
+    rows = conn.execute("SELECT * FROM user_skills ORDER BY created_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def upsert_user_skill(conn: sqlite3.Connection, s_id: str, name: str, category: str, snippet: str) -> None:
+    _ensure_workflow_tables(conn)
+    now = _now()
+    conn.execute(
+        """INSERT INTO user_skills (id, name, category, snippet, created_at)
+           VALUES (?,?,?,?,?)
+           ON CONFLICT(id) DO UPDATE SET name=excluded.name, category=excluded.category,
+             snippet=excluded.snippet""",
+        (s_id, name, category, snippet, now),
+    )
+    conn.commit()
+
+
+def delete_user_skill(conn: sqlite3.Connection, s_id: str) -> bool:
+    _ensure_workflow_tables(conn)
+    cur = conn.execute("DELETE FROM user_skills WHERE id=?", (s_id,))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def create_conversation(conn: sqlite3.Connection, title: str | None = None, kind: str = "chat") -> str:

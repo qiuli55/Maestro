@@ -148,29 +148,44 @@ def _prepare_job(
     confirm: bool = True,
     conv_id: str | None = None,
     selected_workers: list[str] | None = None,
+    custom_subtasks: list[dict] | None = None,
 ):
-    """后台线程：拆分+入库，停在 READY 等用户确认；confirm=False 则立即执行。"""
+    """后台线程：拆分+入库，停在 READY 等用户确认；confirm=False 则立即执行。
+
+    custom_subtasks 非空时走工作流编排链路（卡片即子任务，跳过拆分）。
+    """
     conn = db.init_db()
     selected_workers = selected_workers or ["embedded"]
     try:
-        task_id_out = orchestrator.prepare_task(
-            conn,
-            prompt,
-            scenario=scenario,
-            worker_type=worker_type,
-            parallel=parallel,
-            model=model,
-            task_id=task_id,
-            no_merge=no_merge,
-            conv_id=conv_id,
-        )
-        # 多 agent round-robin 分配
-        if len(selected_workers) > 1:
-            subtasks = db.get_subtasks(conn, task_id_out)
-            for i, st in enumerate(subtasks):
-                wt = selected_workers[i % len(selected_workers)]
-                conn.execute("UPDATE subtasks SET worker_type=? WHERE id=?", (wt, st["id"]))
-            conn.commit()
+        if custom_subtasks is not None:
+            task_id_out = orchestrator.prepare_custom(
+                conn,
+                prompt,
+                task_id=task_id,
+                subtasks=custom_subtasks,
+                parallel=parallel,
+                no_merge=no_merge,
+                conv_id=conv_id,
+            )
+        else:
+            task_id_out = orchestrator.prepare_task(
+                conn,
+                prompt,
+                scenario=scenario,
+                worker_type=worker_type,
+                parallel=parallel,
+                model=model,
+                task_id=task_id,
+                no_merge=no_merge,
+                conv_id=conv_id,
+            )
+            # 多 agent round-robin 分配
+            if len(selected_workers) > 1:
+                subtasks = db.get_subtasks(conn, task_id_out)
+                for i, st in enumerate(subtasks):
+                    wt = selected_workers[i % len(selected_workers)]
+                    conn.execute("UPDATE subtasks SET worker_type=? WHERE id=?", (wt, st["id"]))
+                conn.commit()
         if not confirm:
             # 跳过人工闸门：拆分完立即执行（等价旧行为）
             orchestrator.execute_task(conn, task_id, model=model)
@@ -396,6 +411,207 @@ _WORKER_META = {
 }
 
 
+def _workflow_to_subtasks(definition: dict) -> list[dict]:
+    """用户工作流定义 → 有序启用卡片（跳过禁用卡片）。"""
+    subs = []
+    for st in (definition or {}).get("stages") or []:
+        stage_name = str(st.get("name") or "环节").strip()[:30]
+        for c in st.get("cards") or []:
+            if not c.get("enabled", True):
+                continue
+            desc = (c.get("desc") or "").strip()
+            if not desc:
+                continue
+            subs.append({
+                "desc": f"【{stage_name}】{desc}"[:900],
+                "worker_type": c.get("worker") or "embedded",
+                "model": c.get("model") or None,
+                "skills": [str(s)[:30] for s in (c.get("skills") or [])][:8],
+            })
+    return subs
+
+
+def _validate_workflow_definition(definition) -> list[dict]:
+    """校验并清洗工作流定义，返回规范化的 stages。"""
+    if not isinstance(definition, dict) or not isinstance(definition.get("stages"), list) \
+            or not definition["stages"]:
+        raise HTTPException(400, "definition.stages 不能为空")
+    available = _wmod.available_workers()
+    cleaned = []
+    for i, st in enumerate(definition["stages"]):
+        if not isinstance(st, dict):
+            raise HTTPException(400, f"环节 #{i + 1} 格式错误")
+        name = str(st.get("name") or f"环节{i + 1}").strip()[:30]
+        raw_cards = st.get("cards")
+        if not isinstance(raw_cards, list) or not raw_cards:
+            raise HTTPException(400, f"环节「{name}」至少需要一张卡片")
+        cards = []
+        for c in raw_cards:
+            if not isinstance(c, dict):
+                raise HTTPException(400, f"环节「{name}」存在格式错误的卡片")
+            desc = str(c.get("desc") or "").strip()
+            if not desc:
+                raise HTTPException(400, f"环节「{name}」有卡片缺任务描述")
+            wt = c.get("worker") or "embedded"
+            if wt not in available:
+                raise HTTPException(400, f"环节「{name}」卡片智能体非法: {wt}")
+            cards.append({
+                "id": str(c.get("id") or f"card_{os.urandom(4).hex()}"),
+                "enabled": bool(c.get("enabled", True)),
+                "desc": desc[:800],
+                "worker": wt,
+                "model": c.get("model") or None,
+                "skills": [str(s)[:30] for s in (c.get("skills") or [])][:8],
+            })
+        cleaned.append({
+            "id": str(st.get("id") or f"stage_{os.urandom(4).hex()}"),
+            "name": name,
+            "cards": cards,
+        })
+    return cleaned
+
+
+@app.get("/api/workflows")
+def list_workflows():
+    """工作流库（任务处理模板）：前端任务窗口的选择器数据源。"""
+    from . import config as _cfg
+
+    available = _wmod.available_workers()
+    out = []
+    for wf in _cfg.load_workflows():
+        workers = [w for w in wf["workers"] if w in available]
+        out.append({
+            "id": wf["id"],
+            "name": wf["name"],
+            "icon": wf["icon"],
+            "desc": wf["desc"],
+            "scenario": wf["scenario"],
+            "parallel": wf["parallel"],
+            "workers": workers or wf["workers"],
+            "workers_available": bool(workers),
+            "model": wf["model"],
+            "confirm": wf["confirm"],
+            "no_merge": wf["no_merge"],
+            "source": "preset",
+        })
+    conn = db.init_db()
+    try:
+        for uw in db.list_user_workflows(conn):
+            out.append({
+                "id": uw["id"],
+                "name": uw["name"],
+                "icon": "🧩",
+                "desc": "自定义工作流",
+                "source": "user",
+            })
+    finally:
+        conn.close()
+    return out
+
+
+@app.get("/api/workflows/{wf_id}")
+def get_workflow_detail(wf_id: str):
+    """单个工作流详情（编排器载入用）：preset 返回预设字段，user 返回完整 definition。"""
+    from . import config as _cfg
+
+    preset = _cfg.resolve_workflow(wf_id)
+    if preset:
+        return {"id": preset["id"], "name": preset["name"], "source": "preset",
+                "icon": preset["icon"], "desc": preset["desc"],
+                "definition": {"stages": [{"id": "stage_" + preset["id"], "name": preset["name"],
+                                            "cards": [{"id": "card_" + preset["id"], "enabled": True,
+                                                       "desc": preset["desc"] or ("按预设执行：" + preset["name"]),
+                                                       "worker": (preset["workers"] or ["embedded"])[0],
+                                                       "model": preset["model"], "skills": []}]}]}}
+    conn = db.init_db()
+    try:
+        uw = db.get_user_workflow(conn, wf_id)
+    finally:
+        conn.close()
+    if not uw:
+        raise HTTPException(404, "工作流不存在")
+    return {"id": uw["id"], "name": uw["name"], "source": "user", "definition": uw["definition"]}
+
+
+@app.post("/api/workflows")
+def save_user_workflow(payload: dict):
+    """保存（新建/更新）用户自建工作流。definition.stages 经白名单校验。"""
+    name = str(payload.get("name") or "").strip()[:40]
+    if not name:
+        raise HTTPException(400, "工作流名称不能为空")
+    stages = _validate_workflow_definition(payload.get("definition"))
+    wf_id = str(payload.get("id") or f"wf_{os.urandom(4).hex()}")
+    conn = db.init_db()
+    try:
+        db.upsert_user_workflow(conn, wf_id, name, {"stages": stages})
+    finally:
+        conn.close()
+    return {"ok": True, "id": wf_id, "name": name, "stages": stages}
+
+
+@app.delete("/api/workflows/{wf_id}")
+def delete_user_workflow(wf_id: str):
+    conn = db.init_db()
+    try:
+        if not db.delete_user_workflow(conn, wf_id):
+            raise HTTPException(404, "工作流不存在（内置预设不可删除）")
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.get("/api/skills")
+def list_skills():
+    """技能库：内置 + 用户自建（同名覆盖），带分类。"""
+    from . import skills as skills_mod
+
+    conn = db.init_db()
+    try:
+        return skills_mod.merged_skills(conn)
+    finally:
+        conn.close()
+
+
+@app.post("/api/skills")
+def add_skill(payload: dict):
+    """新增用户技能；未指定分类时按名称关键词自动分类。"""
+    from . import skills as skills_mod
+
+    name = str(payload.get("name") or "").strip()[:30]
+    if not name:
+        raise HTTPException(400, "技能名称不能为空")
+    category = str(payload.get("category") or "").strip()[:10]
+    if not category:
+        category = skills_mod.classify_skill(name)
+    if category not in skills_mod.CATEGORIES:
+        raise HTTPException(400, f"分类非法：{category}（允许: {skills_mod.CATEGORIES}）")
+    snippet = str(payload.get("snippet") or "").strip()[:300]
+    conn = db.init_db()
+    try:
+        # 同名用户技能已存在 → 更新
+        existing = next((s for s in db.list_user_skills(conn) if s["name"] == name), None)
+        s_id = existing["id"] if existing else f"sk_{os.urandom(4).hex()}"
+        db.upsert_user_skill(conn, s_id, name, category, snippet)
+        user_names = {s["name"] for s in db.list_user_skills(conn)}
+    finally:
+        conn.close()
+    # 内置同名技能被用户技能覆盖
+    effective_source = "user" if name in user_names else "builtin"
+    return {"ok": True, "id": s_id, "name": name, "category": category,
+            "snippet": snippet, "source": effective_source}
+
+
+@app.delete("/api/skills/{skill_id}")
+def delete_skill(skill_id: str):
+    conn = db.init_db()
+    try:
+        if not db.delete_user_skill(conn, skill_id):
+            raise HTTPException(404, "技能不存在（内置技能不可删除）")
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
 @app.get("/api/agents")
 def list_agents():
     """返回所有已注册的 agent（含名称/描述/是否可用）。"""
@@ -443,9 +659,54 @@ def list_models():
     return _cfg.get_available_models()
 
 
+def apply_workflow_defaults(payload: dict) -> dict:
+    """工作流预设填充：configs/workflows.json 提供 scenario/parallel/agents/model 等默认值，
+    payload 里显式传入的字段优先（前端可对工作流做逐项覆盖）。
+
+    未知工作流抛 ValueError（由调用方转 400）。
+    """
+    wf_id = payload.get("workflow")
+    if not wf_id:
+        return payload
+    from . import config as _cfg
+
+    wf = _cfg.resolve_workflow(str(wf_id))
+    if wf is None:
+        raise ValueError(f"未知工作流: {wf_id}")
+    out = dict(payload)
+    for key in ("scenario", "parallel", "no_merge", "confirm"):
+        if key not in out:
+            out[key] = wf[key]
+    if not out.get("selected_workers") and wf["workers"]:
+        out["selected_workers"] = list(wf["workers"])
+    if out.get("model") in (None, "") and wf["model"]:
+        out["model"] = wf["model"]
+    return out
+
+
 @app.post("/api/tasks")
 async def create_task(payload: dict):
+    try:
+        payload = apply_workflow_defaults(payload)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    wf_id = payload.get("workflow")
     prompt = (payload.get("prompt") or "").strip()
+    # 工作流编排：客户端直接提交启用卡片作为子任务（跳过 LLM 拆分）
+    custom_subtasks = payload.get("subtasks")
+    if custom_subtasks is not None and not isinstance(custom_subtasks, list):
+        raise HTTPException(400, "subtasks 必须是数组")
+    if custom_subtasks is None and wf_id:
+        # 用户自建工作流：按 id 展开启用卡片
+        conn = db.init_db()
+        try:
+            uw = db.get_user_workflow(conn, str(wf_id))
+        finally:
+            conn.close()
+        if uw is not None:
+            custom_subtasks = _workflow_to_subtasks(uw["definition"])
+            if not custom_subtasks:
+                raise HTTPException(400, "该工作流没有启用的卡片")
     scenario = payload.get("scenario", "a")
     worker_type = payload.get("worker_type", "embedded")
     parallel = bool(payload.get("parallel", scenario != "a"))
@@ -468,14 +729,16 @@ async def create_task(payload: dict):
 
     if not prompt:
         raise HTTPException(400, "prompt 不能为空")
-    if scenario not in ("a", "b", "c", "auto"):
+    if custom_subtasks is not None:
+        scenario = "custom"  # 自定义卡片链路：不做场景校验与 auto 识别
+    elif scenario not in ("a", "b", "c", "auto"):
         raise HTTPException(400, "scenario 必须是 a / b / c / auto")
     # 用第一个 agent 拆分任务，后续 round-robin 分配
     if worker_type not in valid_workers:
         worker_type = selected_workers[0]
 
     detect_reason = None
-    if scenario == "auto":
+    if scenario == "auto" and custom_subtasks is None:
         # 决策：LLM 识别输入类型 → 路由到 a/b/c
         try:
             scenario, detect_reason = split.detect_scenario(prompt, model=model)
@@ -496,6 +759,7 @@ async def create_task(payload: dict):
         confirm,
         conv_id,
         selected_workers,
+        custom_subtasks,
     )
     return {
         "task_id": task_id,
@@ -504,6 +768,7 @@ async def create_task(payload: dict):
         "detect_reason": detect_reason,
         "selected_workers": selected_workers,
         "model": model,
+        "workflow": wf_id,
     }
 
 

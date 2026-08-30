@@ -38,6 +38,8 @@ def _execute_subtask(db_path: str, task_id: str, subtask: dict, timeout: int, mo
     sid = subtask["id"]
     workdir = _workdir(task_id, sid)
     tconn = db.init_db(db_path)
+    # 工作流卡片级模型优先于任务级模型
+    model = subtask.get("model") or model
     try:
         # 协作式取消闸门：spawn 前最后一道检查——线程池并行派发后，
         # 用户中途取消时这里能立即标记而不调 worker（避免浪费 token/时间）。
@@ -136,6 +138,67 @@ def _prepare_subtasks(
         st["id"] = f"{task_id}_{st['id']}"
     db.add_subtasks(conn, task_id, subtasks)
     return subtasks
+
+
+def prepare_custom(
+    conn,
+    prompt: str,
+    task_id: str | None = None,
+    subtasks: list[dict] | None = None,
+    parallel: bool = True,
+    no_merge: bool = False,
+    conv_id: str | None = None,
+) -> str:
+    """自定义子任务链路（工作流编排器）：跳过拆分，直接把启用卡片作为子任务入库。
+
+    subtasks: [{desc, worker_type, model?, skills?}]；skills 展开为【技能要求】附加到 desc。
+    入库后停 READY（confirm=False 由调用方接着 execute）。
+    """
+    from . import config as _cfg, skills as skills_mod
+
+    task_id = task_id or f"task_{uuid.uuid4().hex[:8]}"
+    items = subtasks or []
+    if not items:
+        raise ValueError("工作流没有启用的卡片")
+    allowed = wbase.available_workers()
+    lib = {s["name"]: s for s in skills_mod.merged_skills(conn)}
+    cleaned = []
+    for i, st in enumerate(items):
+        desc = (st.get("desc") or "").strip()
+        if not desc:
+            raise ValueError(f"卡片 #{i + 1} 缺任务描述")
+        wt = st.get("worker_type") or "embedded"
+        if wt not in allowed:
+            raise ValueError(f"卡片 #{i + 1} 智能体非法: {wt}")
+        skills = [str(s)[:30] for s in (st.get("skills") or [])][:8]
+        desc_full = skills_mod.expand_desc(desc[:800], skills, lib)
+        cleaned.append({
+            "id": f"{task_id}_st_{i + 1}",
+            "desc": desc_full,
+            "worker_type": wt,
+            "model": st.get("model") or None,
+        })
+        # skills 白名单之外的信息不落库
+    db.create_task(conn, task_id, prompt, conv_id=conv_id)
+    db.set_task_params(
+        conn, task_id,
+        scenario="custom",
+        worker_type=cleaned[0]["worker_type"],
+        parallel=parallel,
+        no_merge=no_merge,
+    )
+    db.add_subtasks(conn, task_id, cleaned)
+    db.set_task_status(conn, task_id, db.READY)
+    db.log_event(
+        conn, task_id,
+        f"custom workflow -> {len(cleaned)} cards (ready)",
+        data=[{"id": s["id"], "worker_type": s["worker_type"], "model": s["model"]} for s in cleaned],
+    )
+    observability.get_logger(__name__).info(
+        "custom workflow prepared",
+        extra={"task_id": task_id, "n_cards": len(cleaned), "parallel": parallel},
+    )
+    return task_id
 
 
 def prepare_task(
