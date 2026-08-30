@@ -156,7 +156,44 @@ app.add_event_handler("startup", capture_main_loop)
 app.add_event_handler("startup", prune_old_events_startup)
 
 
+async def _backup_loop() -> None:
+    """启动时立即备份一次，之后每 24h 备份（在线备份，保留 7 份）。"""
+    import asyncio as _asyncio
+
+    from . import db as _db
+
+    while True:
+        try:
+            _db.backup_database(keep=7)
+        except Exception:  # noqa: BLE001 — 备份失败不拖垮服务
+            pass
+        await _asyncio.sleep(24 * 3600)
+
+
+@app.on_event("startup")
+async def _start_backup_loop():
+    import asyncio as _asyncio
+
+    _asyncio.get_running_loop().create_task(_backup_loop())
+
+
 # ---------- 壁纸预览 ----------
+
+
+@app.get("/metrics")
+def metrics(format: str = "prometheus"):
+    """Prometheus 指标（?format=json 可切 JSON）。监控探针用，免鉴权。"""
+    from . import metrics as metrics_mod
+
+    m = metrics_mod.collect_metrics()
+    if format == "json":
+        return m
+    from fastapi.responses import PlainTextResponse
+
+    return PlainTextResponse(
+        metrics_mod.format_prometheus(m),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @app.get("/wallpaper")

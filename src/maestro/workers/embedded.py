@@ -59,7 +59,7 @@ _WRITE_TOOL = {
     "type": "function",
     "function": {
         "name": "write_file",
-        "description": "写内容到文件（可以是代码、Markdown、文本等）。文件会保存到 F:/Maestro/outputs/",
+        "description": "写内容到文件（可以是代码、Markdown、文本等）。文件会保存到任务的 outputs 目录（可跨任务访问）",
         "parameters": {
             "type": "object",
             "properties": {

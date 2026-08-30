@@ -576,6 +576,46 @@ def get_chat_history(conn: sqlite3.Connection, limit: int = 20, conv_id: str | N
     return [dict(r) for r in reversed(rows)]
 
 
+def backup_database(db_path: Path | str | None = None, backup_dir: Path | str | None = None,
+                     keep: int = 7) -> Path | None:
+    """SQLite 在线安全备份（backup API，不停服务）。
+
+    备份到 backup_dir（默认 <库所在目录>/backups），文件名带时间戳；
+    只保留最近 keep 份。备份失败（如库不存在）返回 None 不抛错。
+    """
+    src = Path(db_path or os.environ.get("MAESTRO_DB", DEFAULT_DB)).resolve()
+    if not src.exists():
+        return None
+    target_dir = Path(backup_dir or (src.parent / "backups"))
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    target = target_dir / f"maestro_{stamp}.db"
+    try:
+        conn = sqlite3.connect(src)
+        try:
+            dst = sqlite3.connect(target)
+            try:
+                conn.backup(dst)  # 在线备份 API：源库写入锁下也安全
+            finally:
+                dst.close()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        try:
+            target.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
+    # 保留策略：只留最近 keep 份
+    backups = sorted(target_dir.glob("maestro_*.db"))
+    for old_f in backups[:-keep]:
+        try:
+            old_f.unlink()
+        except OSError:
+            pass
+    return target
+
+
 def prune_old_events(conn: sqlite3.Connection, days: int = 30) -> int:
     """删除 days 天前的任务事件（保留策略，防 task_events 无限增长）。返回删除条数。"""
     from datetime import timedelta

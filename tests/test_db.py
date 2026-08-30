@@ -2,6 +2,7 @@
 
 用 tmp_db fixture 指向临时库，不污染项目根；不依赖 API key。
 """
+import sqlite3
 import json
 
 from maestro import db
@@ -135,3 +136,31 @@ def test_prune_old_events(tmp_db):
     ids = {r[0] for r in rows}
     assert "t_old" not in ids
     assert "t_new" in ids
+
+
+def test_backup_database(tmp_db, tmp_path):
+    """在线备份生成文件且保留策略生效。"""
+    import time
+
+    db.add_chat_message(tmp_db, "user", "备份测试", conv_id="conv_x")
+    src = tmp_path / "src.db"
+    # 用 tmp_db 同路径库做源（tmp_db 指向 tmp_path/test.db）
+    target = db.backup_database(tmp_path / "test.db", backup_dir=tmp_path / "bk", keep=2)
+    assert target is not None and target.exists()
+    # 验证备份可读且含数据
+    check = sqlite3.connect(target)
+    try:
+        n = check.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0]
+        assert n >= 1
+    finally:
+        check.close()
+    # 保留策略：写 3 份只留 2
+    for _ in range(2):
+        time.sleep(1.01)  # 时间戳秒级
+        db.backup_database(tmp_path / "test.db", backup_dir=tmp_path / "bk", keep=2)
+    left = sorted((tmp_path / "bk").glob("maestro_*.db"))
+    assert len(left) <= 2
+
+
+def test_backup_missing_db_returns_none(tmp_path):
+    assert db.backup_database(tmp_path / "nope.db", backup_dir=tmp_path / "bk") is None

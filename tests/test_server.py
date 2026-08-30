@@ -470,3 +470,18 @@ def test_approval_push_hook_registered():
     from maestro import sandbox
 
     assert len(sandbox._notify_hooks) >= 1
+
+
+def test_metrics_endpoint(tmp_path, monkeypatch):
+    """/metrics 返回 Prometheus 文本与 JSON 两种格式，含核心指标。"""
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "m.db"))
+    c = TestClient(app)
+    r = c.get("/metrics")
+    assert r.status_code == 200
+    assert "text/plain" in r.headers["content-type"]
+    assert "maestro_tasks_total" in r.text
+    assert "maestro_ws_connections" in r.text
+    rj = c.get("/metrics?format=json")
+    assert rj.status_code == 200
+    data = rj.json()
+    assert "tasks_total" in data and "uptime_seconds" in data and "pool" in data
