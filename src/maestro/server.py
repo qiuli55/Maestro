@@ -230,4 +230,9 @@ _ws_authenticated = api_ws._ws_authenticated
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("maestro.server:app", host="127.0.0.1", port=8787, reload=False)
+    uvicorn.run(
+        "maestro.server:app",
+        host=os.environ.get("MAESTRO_HOST", "127.0.0.1"),
+        port=int(os.environ.get("MAESTRO_PORT", "8787")),
+        reload=False,
+    )
