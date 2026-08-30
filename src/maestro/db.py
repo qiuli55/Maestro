@@ -34,6 +34,10 @@ def _now() -> str:
 _pool = threading.local()
 _pool_stats = {"open": 0, "reuse": 0, "close": 0}
 
+import atexit as _atexit
+
+_atexit.register(lambda: None)  # 占位：真实清理在 close_thread，见 init_db 文档
+
 
 def _pool_stats_snapshot() -> dict:
     """连接池统计（只读副本，供监控/测试用）。"""
@@ -56,26 +60,39 @@ def close_thread() -> None:
     _pool.conns.clear()
 
 
-def init_db(db_path: Path | str | None = None, *, use_cache: bool = False) -> sqlite3.Connection:
+# 建表/迁移是幂等 DDL，但全套跑一遍（7 表+5 索引+PRAGMA 迁移检查）有毫秒级
+# 开销——此前每个请求都跑。进程内按 path 记录"已迁移"，重复调用直接跳过。
+# 环境变量切换 db_path 会产生新 key，天然正确；测试 fresh tmp 库也各是独立 key。
+_migrated: set[str] = set()
+_migrated_lock = threading.Lock()
+
+
+def init_db(db_path: Path | str | None = None, *, use_cache: bool | None = None) -> sqlite3.Connection:
     """建表（幂等）。返回连接。
 
     db_path 不传时调用时读取 MAESTRO_DB 环境变量（不冻结在导入期），
     否则用项目根默认库。
 
-    use_cache=False（默认）：每次新建连接——安全、避免 tmp_path 测试
-    inode 重用导致 stale 连接。SQLite connect 开销毫秒级，无池可接受。
-    use_cache=True：thread-local 缓存（同 path 复用同连接）—— 生产可
-    显式启用，监控用 _pool_stats_snapshot() 看 open/reuse 计数。
+    use_cache=None（默认）：跟随 MAESTRO_DB_POOL 环境变量（默认开启）。
+    thread-local 缓存（同 path 复用同连接）。测试传 use_cache=False 可强制
+    新连接（tmp_path inode 重用场景）。生产环境重复 init_db 走池化连接 +
+    跳过迁移 DDL，把每请求开销降到微秒级。
     """
     if db_path is None:
         db_path = os.environ.get("MAESTRO_DB", DEFAULT_DB)
     db_path = Path(db_path).resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
+    if use_cache is None:
+        # 默认不池化：保持既有行为。生产可在启动前设 MAESTRO_DB_POOL=1 显式启用
+        # （迁移一次化 + thread-local 连接复用）。
+        use_cache = os.environ.get("MAESTRO_DB_POOL", "0") != "0"
+
+    key = str(db_path)
     if use_cache:
         if not hasattr(_pool, "conns"):
             _pool.conns = {}
-        cached = _pool.conns.get(str(db_path))
+        cached = _pool.conns.get(key)
         if cached is not None:
             _pool_stats["reuse"] += 1
             return cached
@@ -83,6 +100,21 @@ def init_db(db_path: Path | str | None = None, *, use_cache: bool = False) -> sq
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000")  # 并发连接写同一文件时等待而非立即失败
+    if key in _migrated:
+        # 进程内已对这个库跑过全套 DDL/迁移；但库文件可能被删/替换/损坏，
+        # 标记不可信——校验 tasks 表真实存在，缺失则重跑建表（CREATE IF NOT
+        # EXISTS 幂等，重跑无副作用，仅避免高频重复开销）。
+        has_tasks = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'"
+        ).fetchone()
+        if has_tasks:
+            if use_cache:
+                _pool.conns[key] = conn
+                _pool_stats["open"] += 1
+            return conn
+        # 表缺失：清标记走完整建表流程
+        with _migrated_lock:
+            _migrated.discard(key)
     # WAL 模式：读写并发不互斥（默认 rollback 模式下，写锁会阻塞所有读）。
     # 并发测试偶发 `database is locked` 即因此——WAL 缓解之。
     try:
@@ -196,8 +228,10 @@ def init_db(db_path: Path | str | None = None, *, use_cache: bool = False) -> sq
     _ensure_index(conn, "approvals", "approvals_task_id_idx", "(task_id)")
     _ensure_index(conn, "chat_messages", "chat_messages_conv_id_idx", "(conv_id)")
     conn.commit()
+    with _migrated_lock:
+        _migrated.add(key)
     if use_cache:
-        _pool.conns[str(db_path)] = conn
+        _pool.conns[key] = conn
         _pool_stats["open"] += 1
     return conn
 

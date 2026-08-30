@@ -79,9 +79,13 @@ def _fake_workers_have_bin():
 def tmp_db(tmp_path):
     from maestro import db
 
-    conn = db.init_db(tmp_path / "test.db")
+    # 测试库强制非池化：tmp_path 路径可能跨用例复用，池化会把上一个用例
+    # close 掉的连接返回给下一个用例（SQLite ProgrammingError）。
+    conn = db.init_db(tmp_path / "test.db", use_cache=False)
     yield conn
     conn.close()
+    # 迁移标记按库文件路径记录；tmp 文件已删，清掉避免极端路径复用时跳过 DDL
+    db._migrated.discard(str((tmp_path / "test.db").resolve()))
 
 
 @pytest.fixture(autouse=True)
