@@ -253,6 +253,20 @@ Uvicorn running on http://127.0.0.1:8787
 
 这是正常的——桌宠功能在生产级重构中已移除（仍保留在 `feat/bubble-pet` 分支，如需恢复 `git merge`）。
 
+### 6.6 右上角状态卡变红（"服务降级"）
+
+页面右上角 `#maestro` 状态卡片按颜色提示健康度：
+
+- **蓝色（闪烁）= 正常**（`status="ok"`）
+- **蓝色（常亮）= 有警告**（`status="warn"`，失败任务 >10 或待审批 >20）→ 展开看错误时间线
+- **红色 = 服务降级**（`status="degraded"`，DB/连接异常）→ 服务仍能响应，但仪表盘数据不完整
+
+快速排错：
+1. 点卡片展开，**先看 24h 最近错误列表**——多数是单条任务失败，能定位 task_id 直接查 `/api/tasks/{id}`
+2. 健康仪表盘 API：`curl http://127.0.0.1:8787/api/health/dashboard | python -m json.tool` 看完整 JSON
+3. 如果 `degraded=true` 但 `/api/ready` 正常——DB 偶发慢查询，看 `maestro_pool_*` 指标
+4. 仍然红 → 看 server 日志（`grep ERROR logs/*.log` 或终端 uvicorn 输出）
+
 ---
 
 ## 7. 部署
@@ -292,11 +306,17 @@ ls -lt maestro.db/backups/ | head
 ### 7.6 监控
 
 ```bash
-curl http://127.0.0.1:8787/metrics                   # Prometheus 文本
+# Prometheus 格式（给监控系统抓）
+curl http://127.0.0.1:8787/metrics                   # text/plain
 curl http://127.0.0.1:8787/metrics?format=json       # JSON
+
+# 健康仪表盘（给"想看一眼现状"的人）
+curl http://127.0.0.1:8787/api/health/dashboard | python -m json.tool
 ```
 
-关键指标：`maestro_tasks_total` / `maestro_subtasks_total` / `maestro_approvals_pending` / `maestro_ws_connections` / `maestro_pool_*` / `maestro_uptime_seconds`。
+**Prometheus 端点**输出指标序列（`maestro_tasks_total` / `maestro_subtasks_total` / `maestro_approvals_pending` / `maestro_ws_connections` / `maestro_pool_*` / `maestro_uptime_seconds`），适合 Prometheus/Grafana 抓取。
+
+**`/api/health/dashboard` 端点**面向人——返回当前服务状态、任务各状态计数、待审批数、24h 内最近 10 条错误事件、WS 连接数、错误/降级标记。页面右上角 `#maestro` 状态卡每 5 秒自动拉一次，**红点 = 服务降级**（DB 查不动了）、**蓝点闪烁 = 正常但有警告**（失败任务或待审批积压）、**蓝点常亮 = 一切正常**。状态卡默认折叠，点展开看错误时间线。
 
 ### 7.7 性能调优
 
@@ -353,6 +373,7 @@ pytest tests/test_integration_smoke.py
 | 元 | GET `/api/healthz`, `/api/ready`, `/api/workers/health` | 探针 |
 | 元 | GET `/api/agents`, `/api/keys`, `/api/models` | 配置 |
 | 监控 | GET `/metrics[?format=json]` | Prometheus/JSON |
+| 监控 | GET `/api/health/dashboard` | 健康仪表盘（人看，状态/任务/错误/WS） |
 | WS | WS `/ws[?key=...]` | 订阅 / 推送 |
 
 ---
