@@ -177,6 +177,8 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     # ---- startup ----
+    import asyncio
+
     from .api.deps import capture_main_loop as _capture, prune_old_events_startup as _prune
 
     await _capture()
