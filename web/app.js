@@ -1957,6 +1957,103 @@
     });
     return subs;
   }
+  // ===== 运行视图：编排器面板内实时显示各环节卡片状态/产出 =====
+  var wfRunView={taskId:null,convId:null,timer:0};
+  function wfRunViewStart(convId,taskId){
+    wfRunView={taskId:taskId,convId:convId,timer:0};
+    var b=document.getElementById("wf-builder");
+    b.classList.add("running");
+    var hd=b.querySelector(".wfb-head .wfb-btn#run-btn")||b.querySelector(".wfb-head");
+    // 顶部提示条
+    var tip=b.querySelector(".wfb-run-tip");
+    if(!tip){
+      tip=document.createElement("div");
+      tip.className="wfb-run-tip";
+      var hint=b.querySelector(".wfb-hint");
+      hint.parentNode.insertBefore(tip,hint.nextSibling);
+    }
+    tip.innerHTML='<span class="rt-dot"></span>运行中 · <b>'+escapeHtml(taskId)+'</b>（卡片右上角显示实时状态，点 ▐▐ 关闭跟踪）';
+    var stop=document.createElement("button");
+    stop.type="button";stop.className="rt-stop";stop.textContent="▐▐ 关闭跟踪";
+    stop.addEventListener("click",function(){wfRunViewStop();});
+    tip.appendChild(stop);
+    wfRunViewTick();
+  }
+  function wfRunViewStop(){
+    clearTimeout(wfRunView.timer);
+    wfRunView={taskId:null,convId:null,timer:0};
+    var b=document.getElementById("wf-builder");
+    b.classList.remove("running");
+    var tip=b.querySelector(".wfb-run-tip");
+    if(tip)tip.remove();
+    // 清掉卡片上的运行徽章
+    b.querySelectorAll(".wf-card .wc-run").forEach(function(el){el.remove();});
+    b.querySelectorAll(".wf-card.wc-running,.wf-card.wc-done,.wf-card.wc-failed").forEach(function(el){
+      el.classList.remove("wc-running","wc-done","wc-failed");
+    });
+  }
+  function wfRunViewTick(){
+    if(!wfRunView.taskId)return;
+    fetch(MAESTRO+"/api/tasks/"+encodeURIComponent(wfRunView.taskId),{cache:"no-store"})
+      .then(function(r){return r.ok?r.json():null})
+      .then(function(snap){
+        if(!snap||!snap.task){wfRunViewStop();return;}
+        wfRunViewRender(snap);
+        if(snap.task.status==="done"||snap.task.status==="failed"){
+          var tip=document.querySelector(".wfb-run-tip .rt-dot");
+          if(tip)tip.classList.add(snap.task.status==="done"?"ok":"bad");
+          var txt=document.querySelector(".wfb-run-tip");
+          if(txt)txt.childNodes[1].textContent=snap.task.status==="done"?"已完成 ✔ ":"已失败 ✖ ";
+          return; // 终态：停止轮询（保留徽章供查看）
+        }
+        wfRunView.timer=setTimeout(wfRunViewTick,1500);
+      })
+      .catch(function(){wfRunView.timer=setTimeout(wfRunViewTick,4000)});
+  }
+  function wfRunViewRender(snap){
+    // 子任务按 idx 对应回编排器卡片：提交顺序 = stage 分组展开顺序 = wfCollectSubtasks 顺序
+    var subs=snap.subtasks||[];
+    var flat=[]; // [{si,ci}]
+    wfState.stages.forEach(function(st,si){
+      st.cards.forEach(function(c,ci){ if(c.enabled&&((c.desc||"").trim())) flat.push({si:si,ci:ci}); });
+    });
+    var b=document.getElementById("wf-builder");
+    subs.forEach(function(s,i){
+      var pos=flat[i];
+      if(!pos)return;
+      var card=b.querySelector('.wf-card[data-si="'+pos.si+'"][data-ci="'+pos.ci+'"]');
+      if(!card)return;
+      var badge=card.querySelector(".wc-run");
+      if(!badge){
+        badge=document.createElement("span");
+        badge.className="wc-run";
+        card.querySelector(".wc-ops").appendChild(badge);
+      }
+      var map={pending:"待执行",running:"执行中",done:"完成",failed:"失败",cancelled:"跳过"};
+      badge.textContent=map[s.status]||s.status;
+      badge.className="wc-run st-"+s.status;
+      card.classList.toggle("wc-running",s.status==="running");
+      card.classList.toggle("wc-done",s.status==="done");
+      card.classList.toggle("wc-failed",s.status==="failed");
+      // 产出预览（title 提示 + 完成时前 60 字内联展示）
+      var prev=card.querySelector(".wc-output");
+      if(s.status==="done"&&s.output){
+        if(!prev){
+          prev=document.createElement("div");
+          prev.className="wc-output";
+          card.appendChild(prev);
+        }
+        var out=String(s.output).slice(0,80);
+        prev.textContent=out+(String(s.output).length>80?"…":"");
+        prev.title=String(s.output).slice(0,500);
+      }else if(prev&&s.status==="running"){
+        prev.remove();
+      }
+      if(s.error){
+        badge.title=String(s.error).slice(0,300);
+      }
+    });
+  }
   function wfSave(){
     var name=document.getElementById("wfb-name").value.trim();
     if(!name){showReply("先给工作流起个名字",2000);return;}
@@ -1990,8 +2087,9 @@
           if(d&&d.task_id){
             winAppendTaskCard(convId,d.task_id,
               d.selected_workers&&d.selected_workers.length?d.selected_workers:["工作流"],null,v);
-            closeWfBuilder();
             resetDockInput();
+            // 运行视图：编排器面板切入实时状态（卡片徽章 + 产出预览）
+            wfRunViewStart(convId,d.task_id);
           }else{
             showReply("运行失败："+((d&&d.detail)||"未知错误"),3000);
           }

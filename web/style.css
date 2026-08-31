@@ -261,6 +261,28 @@
   #wfb-add-stage{margin:8px 2px 0;border:1.5px dashed rgba(91,107,181,.4);border-radius:10px;
     padding:8px;color:#5b6bb5;background:transparent;cursor:pointer;font-size:12px;font-weight:600}
   #wfb-add-stage:hover{background:rgba(91,107,181,.06)}
+  /* ===== 工作流运行视图 ===== */
+  .wfb-run-tip{display:flex;gap:6px;align-items:center;margin-top:6px;padding:6px 10px;
+    border-radius:8px;background:rgba(77,163,255,.12);color:#2f6fb8;font-size:12px}
+  .wfb-run-tip .rt-dot{width:8px;height:8px;border-radius:50%;background:#4da3ff;
+    animation:pulse 1.4s ease-in-out infinite;flex:none}
+  .wfb-run-tip .rt-dot.ok{background:#34c96b;animation:none}
+  .wfb-run-tip .rt-dot.bad{background:#ef6a6a;animation:none}
+  .wfb-run-tip .rt-stop{margin-left:auto;border:none;background:rgba(90,105,175,.14);
+    color:#4d5ca5;font-size:10.5px;padding:2px 8px;border-radius:5px;cursor:pointer;white-space:nowrap}
+  .wfb-run-tip .rt-stop:hover{background:rgba(90,105,175,.26)}
+  .wf-card .wc-run{font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:6px;flex:none}
+  .wf-card .wc-run.st-pending{background:rgba(138,148,173,.18);color:#7a7aa8}
+  .wf-card .wc-run.st-running{background:rgba(77,163,255,.18);color:#2f7fd6;animation:pulse 1.4s ease-in-out infinite}
+  .wf-card .wc-run.st-done{background:rgba(52,201,107,.18);color:#1fa855}
+  .wf-card .wc-run.st-failed{background:rgba(239,106,106,.18);color:#d64545}
+  .wf-card .wc-run.st-cancelled{background:rgba(138,148,173,.18);color:#9a9ab8}
+  .wf-card.wc-running{box-shadow:0 0 0 2px rgba(77,163,255,.45),0 2px 12px rgba(40,50,100,.15)}
+  .wf-card.wc-done{border-style:solid}
+  .wf-card.wc-failed{box-shadow:0 0 0 2px rgba(239,106,106,.4)}
+  .wf-card .wc-output{margin-top:5px;font-size:10px;color:#7a7aa8;background:rgba(148,155,195,.1);
+    border-radius:5px;padding:3px 6px;line-height:1.5;word-break:break-all;
+    max-height:44px;overflow:hidden}
   /* ===== 跨对话上下文关联 ===== */
   .win-links{display:none;flex-wrap:wrap;gap:4px;padding:5px 10px;align-items:center;
     border-bottom:1px solid rgba(80,90,140,.12);background:rgba(91,107,181,.06);

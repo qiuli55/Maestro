@@ -218,7 +218,15 @@ if WALLPAPER_DIR.exists():
 # ---------- 静态前端（最后挂载，避免拦截 /api 与 /ws）----------
 
 if WEB_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
+    # 开发/自托管场景禁用前端缓存：更新 app.js/style.css 后普通刷新即生效
+    # （生产 CDN 场景可再包一层带版本号的缓存策略）
+    class _NoCacheStatic(StaticFiles):
+        def file_response(self, *args, **kwargs):
+            resp = super().file_response(*args, **kwargs)
+            resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+            return resp
+
+    app.mount("/", _NoCacheStatic(directory=str(WEB_DIR), html=True), name="web")
 
 
 # ====== 兼容导出（既有测试/调用方依赖这些名字） ======
