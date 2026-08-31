@@ -18,7 +18,9 @@ CANCELLED = "cancelled"  # 用户手动取消（终态）
 
 VALID_STATUS = {PENDING, READY, RUNNING, DONE, FAILED, RETRY, CANCELLED}
 
-DEFAULT_DB = Path(__file__).resolve().parents[2] / "maestro.db"
+from . import runtime as _runtime_mod
+
+DEFAULT_DB = _runtime_mod.data_dir() / "maestro.db"
 
 DEFAULT_CONV_ID = "conv_default"  # 存量消息的默认会话
 
@@ -33,6 +35,10 @@ def _now() -> str:
 # 不同线程独立连接。close_thread() 清理当前线程缓存。
 _pool = threading.local()
 _pool_stats = {"open": 0, "reuse": 0, "close": 0}
+
+import atexit as _atexit
+
+_atexit.register(lambda: None)  # 占位：真实清理在 close_thread，见 init_db 文档
 
 
 def _pool_stats_snapshot() -> dict:
@@ -56,26 +62,39 @@ def close_thread() -> None:
     _pool.conns.clear()
 
 
-def init_db(db_path: Path | str | None = None, *, use_cache: bool = False) -> sqlite3.Connection:
+# 建表/迁移是幂等 DDL，但全套跑一遍（7 表+5 索引+PRAGMA 迁移检查）有毫秒级
+# 开销——此前每个请求都跑。进程内按 path 记录"已迁移"，重复调用直接跳过。
+# 环境变量切换 db_path 会产生新 key，天然正确；测试 fresh tmp 库也各是独立 key。
+_migrated: set[str] = set()
+_migrated_lock = threading.Lock()
+
+
+def init_db(db_path: Path | str | None = None, *, use_cache: bool | None = None) -> sqlite3.Connection:
     """建表（幂等）。返回连接。
 
     db_path 不传时调用时读取 MAESTRO_DB 环境变量（不冻结在导入期），
     否则用项目根默认库。
 
-    use_cache=False（默认）：每次新建连接——安全、避免 tmp_path 测试
-    inode 重用导致 stale 连接。SQLite connect 开销毫秒级，无池可接受。
-    use_cache=True：thread-local 缓存（同 path 复用同连接）—— 生产可
-    显式启用，监控用 _pool_stats_snapshot() 看 open/reuse 计数。
+    use_cache=None（默认）：跟随 MAESTRO_DB_POOL 环境变量（默认开启）。
+    thread-local 缓存（同 path 复用同连接）。测试传 use_cache=False 可强制
+    新连接（tmp_path inode 重用场景）。生产环境重复 init_db 走池化连接 +
+    跳过迁移 DDL，把每请求开销降到微秒级。
     """
     if db_path is None:
         db_path = os.environ.get("MAESTRO_DB", DEFAULT_DB)
     db_path = Path(db_path).resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
+    if use_cache is None:
+        # 默认不池化：保持既有行为。生产可在启动前设 MAESTRO_DB_POOL=1 显式启用
+        # （迁移一次化 + thread-local 连接复用）。
+        use_cache = os.environ.get("MAESTRO_DB_POOL", "0") != "0"
+
+    key = str(db_path)
     if use_cache:
         if not hasattr(_pool, "conns"):
             _pool.conns = {}
-        cached = _pool.conns.get(str(db_path))
+        cached = _pool.conns.get(key)
         if cached is not None:
             _pool_stats["reuse"] += 1
             return cached
@@ -83,6 +102,21 @@ def init_db(db_path: Path | str | None = None, *, use_cache: bool = False) -> sq
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000")  # 并发连接写同一文件时等待而非立即失败
+    if key in _migrated:
+        # 进程内已对这个库跑过全套 DDL/迁移；但库文件可能被删/替换/损坏，
+        # 标记不可信——校验 tasks 表真实存在，缺失则重跑建表（CREATE IF NOT
+        # EXISTS 幂等，重跑无副作用，仅避免高频重复开销）。
+        has_tasks = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'"
+        ).fetchone()
+        if has_tasks:
+            if use_cache:
+                _pool.conns[key] = conn
+                _pool_stats["open"] += 1
+            return conn
+        # 表缺失：清标记走完整建表流程
+        with _migrated_lock:
+            _migrated.discard(key)
     # WAL 模式：读写并发不互斥（默认 rollback 模式下，写锁会阻塞所有读）。
     # 并发测试偶发 `database is locked` 即因此——WAL 缓解之。
     try:
@@ -115,6 +149,8 @@ def init_db(db_path: Path | str | None = None, *, use_cache: bool = False) -> sq
             idx             INTEGER NOT NULL,
             desc            TEXT NOT NULL,
             worker_type     TEXT NOT NULL,
+            model           TEXT,
+            stage           INTEGER,
             status          TEXT NOT NULL DEFAULT 'pending',
             output          TEXT,
             error           TEXT,
@@ -184,6 +220,8 @@ def init_db(db_path: Path | str | None = None, *, use_cache: bool = False) -> sq
     _ensure_task_columns(conn)
     _ensure_conv_column(conn)
     _ensure_conv_kind_column(conn)
+    _ensure_subtask_model_column(conn)
+    _ensure_subtask_stage_column(conn)
     _ensure_default_conversation(conn)
     # 索引（高频查询加速）。CREATE INDEX IF NOT EXISTS 已是幂等。
     # subtasks.task_id：每次执行任务都按 task_id 查子任务列表
@@ -194,8 +232,10 @@ def init_db(db_path: Path | str | None = None, *, use_cache: bool = False) -> sq
     _ensure_index(conn, "approvals", "approvals_task_id_idx", "(task_id)")
     _ensure_index(conn, "chat_messages", "chat_messages_conv_id_idx", "(conv_id)")
     conn.commit()
+    with _migrated_lock:
+        _migrated.add(key)
     if use_cache:
-        _pool.conns[str(db_path)] = conn
+        _pool.conns[key] = conn
         _pool_stats["open"] += 1
     return conn
 
@@ -259,6 +299,20 @@ def _ensure_default_conversation(conn: sqlite3.Connection):
     )
 
 
+def _ensure_subtask_model_column(conn: sqlite3.Connection):
+    """存量库补 subtasks.model 列（工作流卡片级模型）。"""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(subtasks)").fetchall()}
+    if "model" not in cols:
+        _safe_alter(conn, "ALTER TABLE subtasks ADD COLUMN model TEXT")
+
+
+def _ensure_subtask_stage_column(conn: sqlite3.Connection):
+    """存量库补 subtasks.stage（工作流环节序号：环节内并行、环节间串行）。"""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(subtasks)").fetchall()}
+    if "stage" not in cols:
+        _safe_alter(conn, "ALTER TABLE subtasks ADD COLUMN stage INTEGER")
+
+
 def _ensure_conv_kind_column(conn: sqlite3.Connection):
     """存量库补 conversations.kind 列（chat/task，默认 chat）+ 按标题迁移旧数据。"""
     cols = {r[1] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
@@ -312,14 +366,15 @@ def add_subtasks(conn: sqlite3.Connection, task_id: str, subtasks: list[dict]) -
         return []
     now = _now()
     rows = [
-        (st["id"], task_id, idx, st["desc"], st["worker_type"], PENDING, st.get("source_segments"), now, now)
+        (st["id"], task_id, idx, st["desc"], st["worker_type"], PENDING,
+         st.get("source_segments"), st.get("model"), st.get("stage"), now, now)
         for idx, st in enumerate(subtasks)
     ]
     # executemany 一次 INSERT 多行，比循环单条 INSERT 快 ~10x
     conn.executemany(
         """INSERT INTO subtasks
-           (id, task_id, idx, desc, worker_type, status, source_segments, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
+           (id, task_id, idx, desc, worker_type, status, source_segments, model, stage, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
         rows,
     )
     conn.commit()
@@ -523,12 +578,165 @@ def get_chat_history(conn: sqlite3.Connection, limit: int = 20, conv_id: str | N
     return [dict(r) for r in reversed(rows)]
 
 
+def backup_database(db_path: Path | str | None = None, backup_dir: Path | str | None = None,
+                     keep: int = 7) -> Path | None:
+    """SQLite 在线安全备份（backup API，不停服务）。
+
+    备份到 backup_dir（默认 <库所在目录>/backups），文件名带时间戳；
+    只保留最近 keep 份。备份失败（如库不存在）返回 None 不抛错。
+    """
+    src = Path(db_path or os.environ.get("MAESTRO_DB", DEFAULT_DB)).resolve()
+    if not src.exists():
+        return None
+    target_dir = Path(backup_dir or (src.parent / "backups"))
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    target = target_dir / f"maestro_{stamp}.db"
+    try:
+        conn = sqlite3.connect(src)
+        try:
+            dst = sqlite3.connect(target)
+            try:
+                conn.backup(dst)  # 在线备份 API：源库写入锁下也安全
+            finally:
+                dst.close()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        try:
+            target.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
+    # 保留策略：只留最近 keep 份
+    backups = sorted(target_dir.glob("maestro_*.db"))
+    for old_f in backups[:-keep]:
+        try:
+            old_f.unlink()
+        except OSError:
+            pass
+    return target
+
+
+def prune_old_events(conn: sqlite3.Connection, days: int = 30) -> int:
+    """删除 days 天前的任务事件（保留策略，防 task_events 无限增长）。返回删除条数。"""
+    from datetime import timedelta
+
+    cutoff = (datetime.now(UTC) - timedelta(days=max(1, days))).isoformat()
+    cur = conn.execute("DELETE FROM task_events WHERE ts < ?", (cutoff,))
+    conn.commit()
+    return cur.rowcount
+
+
 def clear_chat_history(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM chat_messages")
     conn.commit()
 
 
 # ---------- 会话（对话隔离） ----------
+
+
+# ---------- 用户自建工作流 / 技能（工作流编排器持久化） ----------
+
+
+def _ensure_workflow_tables(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_workflows (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL,
+            definition TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_skills (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL,
+            category   TEXT NOT NULL DEFAULT '通用',
+            snippet    TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def list_user_workflows(conn: sqlite3.Connection) -> list[dict]:
+    _ensure_workflow_tables(conn)
+    rows = conn.execute(
+        "SELECT * FROM user_workflows ORDER BY updated_at DESC"
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["definition"] = json.loads(d["definition"])
+        except json.JSONDecodeError:
+            d["definition"] = {"stages": []}
+        out.append(d)
+    return out
+
+
+def get_user_workflow(conn: sqlite3.Connection, wf_id: str) -> dict | None:
+    _ensure_workflow_tables(conn)
+    r = conn.execute("SELECT * FROM user_workflows WHERE id=?", (wf_id,)).fetchone()
+    if not r:
+        return None
+    d = dict(r)
+    try:
+        d["definition"] = json.loads(d["definition"])
+    except json.JSONDecodeError:
+        d["definition"] = {"stages": []}
+    return d
+
+
+def upsert_user_workflow(conn: sqlite3.Connection, wf_id: str, name: str, definition: dict) -> None:
+    _ensure_workflow_tables(conn)
+    now = _now()
+    conn.execute(
+        """INSERT INTO user_workflows (id, name, definition, created_at, updated_at)
+           VALUES (?,?,?,?,?)
+           ON CONFLICT(id) DO UPDATE SET name=excluded.name,
+             definition=excluded.definition, updated_at=excluded.updated_at""",
+        (wf_id, name, json.dumps(definition, ensure_ascii=False), now, now),
+    )
+    conn.commit()
+
+
+def delete_user_workflow(conn: sqlite3.Connection, wf_id: str) -> bool:
+    _ensure_workflow_tables(conn)
+    cur = conn.execute("DELETE FROM user_workflows WHERE id=?", (wf_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def list_user_skills(conn: sqlite3.Connection) -> list[dict]:
+    _ensure_workflow_tables(conn)
+    rows = conn.execute("SELECT * FROM user_skills ORDER BY created_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def upsert_user_skill(conn: sqlite3.Connection, s_id: str, name: str, category: str, snippet: str) -> None:
+    _ensure_workflow_tables(conn)
+    now = _now()
+    conn.execute(
+        """INSERT INTO user_skills (id, name, category, snippet, created_at)
+           VALUES (?,?,?,?,?)
+           ON CONFLICT(id) DO UPDATE SET name=excluded.name, category=excluded.category,
+             snippet=excluded.snippet""",
+        (s_id, name, category, snippet, now),
+    )
+    conn.commit()
+
+
+def delete_user_skill(conn: sqlite3.Connection, s_id: str) -> bool:
+    _ensure_workflow_tables(conn)
+    cur = conn.execute("DELETE FROM user_skills WHERE id=?", (s_id,))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def create_conversation(conn: sqlite3.Connection, title: str | None = None, kind: str = "chat") -> str:
@@ -548,32 +756,41 @@ def get_conversation(conn: sqlite3.Connection, conv_id: str) -> dict | None:
     return dict(r) if r else None
 
 
-def list_conversations(conn: sqlite3.Connection, kind: str | None = None) -> list[dict]:
-    """会话列表（按最近活跃倒序，可只取某类），带消息数与最后一条内容预览。"""
+def list_conversations(conn: sqlite3.Connection, kind: str | None = None,
+                       q: str | None = None) -> list[dict]:
+    """会话列表（按最近活跃倒序），带消息数与最后一条内容预览。
+
+    kind: 过滤会话类型；q: 搜索（标题或任意消息内容 LIKE，大小写不敏感）。
+    """
+    where = ["1=1"]
+    params: list = []
     if kind:
-        rows = conn.execute(
-            """
-            SELECT c.id, c.title, c.kind, c.updated_at,
-                   (SELECT COUNT(*) FROM chat_messages m WHERE m.conv_id = c.id) AS msg_count,
-                   (SELECT content FROM chat_messages m WHERE m.conv_id = c.id
-                     ORDER BY m.id DESC LIMIT 1) AS last_content
-            FROM conversations c
-            WHERE c.kind = ?
-            ORDER BY c.updated_at DESC
-            """,
-            (kind,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            """
-            SELECT c.id, c.title, c.kind, c.updated_at,
-                   (SELECT COUNT(*) FROM chat_messages m WHERE m.conv_id = c.id) AS msg_count,
-                   (SELECT content FROM chat_messages m WHERE m.conv_id = c.id
-                     ORDER BY m.id DESC LIMIT 1) AS last_content
-            FROM conversations c
-            ORDER BY c.updated_at DESC
-            """
-        ).fetchall()
+        where.append("c.kind = ?")
+        params.append(kind)
+    if q and q.strip():
+        # ESCAPE '\'：用户输入里的 \ % _ 按字面匹配（\ 用 chr(92) 构造避开源码转义歧义）
+        bs = chr(92)
+        where.append(
+            "(c.title LIKE ? ESCAPE '" + bs + "' OR EXISTS ("
+            "SELECT 1 FROM chat_messages m WHERE m.conv_id = c.id AND m.content LIKE ? ESCAPE '" + bs + "'))"
+        )
+        esc = ("%" + q.strip()
+               .replace(bs, bs * 2)
+               .replace("%", bs + "%")
+               .replace("_", bs + "_") + "%")
+        params.extend([esc, esc])
+    rows = conn.execute(
+        f"""
+        SELECT c.id, c.title, c.kind, c.updated_at,
+               (SELECT COUNT(*) FROM chat_messages m WHERE m.conv_id = c.id) AS msg_count,
+               (SELECT content FROM chat_messages m WHERE m.conv_id = c.id
+                 ORDER BY m.id DESC LIMIT 1) AS last_content
+        FROM conversations c
+        WHERE {' AND '.join(where)}
+        ORDER BY c.updated_at DESC
+        """,
+        params,
+    ).fetchall()
     return [dict(r) for r in rows]
 
 

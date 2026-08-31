@@ -8,10 +8,22 @@ import subprocess
 
 from ..workers.base import WorkerResult, register
 
-# MiniMax CLI 路径（需要用 node 运行）
-MMX_BIN = "F:/npm_global/bin/mmx"
-# 使用 node 运行
-MMX_CMD = ["node", "F:/npm_global/node_modules/mmx-cli/dist/mmx.mjs"]
+# MiniMax CLI 路径（可移植：env 优先 → PATH 探测 → 默认兜底）
+# 环境变量：MMX_BIN（mmx 可执行文件）或 MMX_CMD（完整命令数组）
+_MMX_DEFAULT_JS = r"F:/npm_global/node_modules/mmx-cli/dist/mmx.mjs"
+MMX_CMD: list[str] = []
+_mmx_bin = os.environ.get("MMX_BIN") or ""
+if _mmx_bin:
+    MMX_CMD = [_mmx_bin]
+else:
+    import shutil
+
+    _which = shutil.which("mmx")
+    if _which:
+        MMX_CMD = [_which]
+    else:
+        _mmx_js = os.environ.get("MMX_CLI_JS", _MMX_DEFAULT_JS)
+        MMX_CMD = ["node", _mmx_js]
 
 # API Key 必须从环境变量提供；缺失直接报错，绝不写死。
 # 历史背景：之前 DEFAULT_API_KEY 落地源码后已通过 git filter-branch / BFG 清理；

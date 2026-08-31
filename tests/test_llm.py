@@ -164,3 +164,18 @@ def test_tool_call_invalid_json_args_falls_back_to_empty():
 
     # 非法 JSON → fallback 到空 dict（不抛错）
     assert executor_args == [("noop", {})]
+
+def test_get_client_caches_per_provider(monkeypatch):
+    """同一 provider 复用同一 client（连接池复用，不再每次新建）。"""
+    from maestro import llm
+
+    llm.reset_client_cache()
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-cache")
+    c1, _ = llm.get_client("deepseek")
+    c2, _ = llm.get_client("deepseek")
+    assert c1 is c2, "同 provider 应返回缓存 client"
+    # key 变化 → 新 client
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-cache-2")
+    c3, _ = llm.get_client("deepseek")
+    assert c3 is not c1, "key 变化应生成新 client"
+    llm.reset_client_cache()

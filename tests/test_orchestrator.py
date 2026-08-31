@@ -242,3 +242,43 @@ def test_resume_skips_cancelled(tmp_db, monkeypatch):
     assert task["status"] == db.CANCELLED
     subs = db.get_subtasks(tmp_db, tid)
     assert all(s["status"] == db.PENDING for s in subs)
+
+
+def test_permanent_failure_no_retry(tmp_db, monkeypatch):
+    """永久失败（业务错误）不重试：spawn 只被调 1 次。"""
+    from maestro.workers.base import WorkerResult
+
+    calls = {"n": 0}
+
+    def _flaky_once(prompt, workdir, timeout, task_id=None, subtask_id=None):
+        calls["n"] += 1
+        return WorkerResult("", "参数错误：缺少输出目录", False, 1)
+
+    monkeypatch.setattr("maestro.orchestrator.get_worker", lambda name: type(
+        "W", (), {"spawn": staticmethod(_flaky_once),
+                  "check_health": lambda self: (True, "ok")})())
+    tid = orchestrator.run_task(tmp_db, "需求X", scenario="a", worker_type="fake")
+    assert calls["n"] == 1, "永久失败不应重试"
+    subs = db.get_subtasks(tmp_db, tid)
+    assert subs[0]["status"] == db.FAILED
+
+
+def test_transient_failure_retries_once(tmp_db, monkeypatch):
+    """瞬时失败（超时/网络）重试 1 次。"""
+    from maestro.workers.base import WorkerResult
+
+    calls = {"n": 0}
+
+    def _flaky(prompt, workdir, timeout, task_id=None, subtask_id=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return WorkerResult("", "connection timeout after 30s", True, 1)
+        return WorkerResult("OK", "", False, 0)
+
+    monkeypatch.setattr("maestro.orchestrator.get_worker", lambda name: type(
+        "W", (), {"spawn": staticmethod(_flaky),
+                  "check_health": lambda self: (True, "ok")})())
+    tid = orchestrator.run_task(tmp_db, "需求X", scenario="a", worker_type="fake")
+    assert calls["n"] == 2, "瞬时失败应重试一次"
+    subs = db.get_subtasks(tmp_db, tid)
+    assert subs[0]["status"] == db.DONE

@@ -382,3 +382,37 @@ def test_shared_breaker_limiter_reset():
     b2 = resilience.shared_breaker()
     assert b2.state == resilience.CircuitBreaker.CLOSED
     # 注：reset_shared 会创建新实例，b1 和 b2 是不同对象
+
+def test_global_rate_limiter_across_threads():
+    """限流必须跨线程全局生效（每线程独立桶会让 8 线程打出 8×QPS）。"""
+    import threading
+
+    limiter = resilience.RateLimiter(qps=50, burst=5)
+    hits = []
+    lock = threading.Lock()
+
+    def worker():
+        n = 0
+        deadline = time.monotonic() + 1.5  # 整体限时：acquire 的 timeout 是单次调用超时
+        while time.monotonic() < deadline and limiter.acquire(timeout=0.05):
+            n += 1
+        with lock:
+            hits.append(n)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    total = sum(hits)
+    # 1.5s 窗口内全局上限 ≈ burst + qps*1.5 = 5 + 75 = 80；每线程桶会是 4×80=320
+    assert 0 < total <= 110, f"全局限流失效: {total}"
+
+
+def test_rate_limiter_burst_cap():
+    limiter = resilience.RateLimiter(qps=1, burst=3)
+    start = time.monotonic()
+    got = 0
+    while limiter.acquire(timeout=0.01):
+        got += 1
+    assert got <= 3, f"瞬时突发应被 burst 限制: {got}"

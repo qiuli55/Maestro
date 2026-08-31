@@ -1,0 +1,428 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Maestro",
+    "subtitle": "Desktop multi-agent orchestrator · runtime data flow",
+    "output": "maestro-runtime.html"
+  },
+  "components": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "User",
+      "sublabel": "Browser / Mobile",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "frontend",
+      "label": "CLI",
+      "sublabel": "命令行入口",
+      "pos": [
+        200,
+        90
+      ],
+      "size": [
+        160,
+        50
+      ]
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "Web Server",
+      "sublabel": "FastAPI + WS",
+      "pos": [
+        200,
+        180
+      ],
+      "size": [
+        160,
+        60
+      ]
+    },
+    {
+      "id": "chat",
+      "type": "frontend",
+      "label": "Chat",
+      "sublabel": "数字人闲聊 / SSE",
+      "pos": [
+        200,
+        280
+      ],
+      "size": [
+        160,
+        50
+      ]
+    },
+    {
+      "id": "guard",
+      "type": "security",
+      "label": "Guard",
+      "sublabel": "防线 1 · 静态规则扫描",
+      "pos": [
+        200,
+        390
+      ],
+      "size": [
+        160,
+        60
+      ],
+      "tag": "block / warn / ok"
+    },
+    {
+      "id": "orch",
+      "type": "backend",
+      "label": "Orchestrator",
+      "sublabel": "状态机 + split/merge",
+      "pos": [
+        410,
+        180
+      ],
+      "size": [
+        160,
+        60
+      ]
+    },
+    {
+      "id": "hitl",
+      "type": "frontend",
+      "label": "HITL 闸门",
+      "sublabel": "pending → ready → running",
+      "pos": [
+        410,
+        280
+      ],
+      "size": [
+        160,
+        60
+      ]
+    },
+    {
+      "id": "pool",
+      "type": "backend",
+      "label": "ThreadPool",
+      "sublabel": "fast / slow 双池",
+      "pos": [
+        410,
+        380
+      ],
+      "size": [
+        160,
+        60
+      ],
+      "tag": "防止长任务饿死拆分"
+    },
+    {
+      "id": "embed",
+      "type": "backend",
+      "label": "Embedded",
+      "sublabel": "内置 LLM + 工具",
+      "pos": [
+        620,
+        90
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "open",
+      "type": "backend",
+      "label": "OpenCode",
+      "sublabel": "subprocess",
+      "pos": [
+        620,
+        180
+      ],
+      "size": [
+        150,
+        50
+      ]
+    },
+    {
+      "id": "octo",
+      "type": "backend",
+      "label": "Octo",
+      "sublabel": "subprocess",
+      "pos": [
+        620,
+        250
+      ],
+      "size": [
+        150,
+        50
+      ]
+    },
+    {
+      "id": "wkb",
+      "type": "backend",
+      "label": "WorkBuddy",
+      "sublabel": "subprocess",
+      "pos": [
+        620,
+        320
+      ],
+      "size": [
+        150,
+        50
+      ]
+    },
+    {
+      "id": "code",
+      "type": "backend",
+      "label": "CodeBuddy",
+      "sublabel": "cmd /c 包装",
+      "pos": [
+        620,
+        400
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "runcmd",
+      "type": "security",
+      "label": "runcmd",
+      "sublabel": "白名单 + cmd /c 内建包裹",
+      "pos": [
+        810,
+        180
+      ],
+      "size": [
+        140,
+        50
+      ],
+      "tag": "防线 2.1"
+    },
+    {
+      "id": "sand",
+      "type": "security",
+      "label": "Sandbox",
+      "sublabel": "越权命令审批流",
+      "pos": [
+        810,
+        280
+      ],
+      "size": [
+        140,
+        50
+      ],
+      "tag": "防线 2.2"
+    },
+    {
+      "id": "llm",
+      "type": "cloud",
+      "label": "LLM",
+      "sublabel": "DeepSeek / Kimi / MiniMax",
+      "pos": [
+        810,
+        90
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "SQLite",
+      "sublabel": "WAL · tasks / events",
+      "pos": [
+        980,
+        180
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "config",
+      "type": "database",
+      "label": "configs/",
+      "sublabel": "providers / workflows / skills",
+      "pos": [
+        980,
+        280
+      ],
+      "size": [
+        150,
+        50
+      ]
+    },
+    {
+      "id": "ws",
+      "type": "messagebus",
+      "label": "/ws",
+      "sublabel": "订阅 chat / task / approval",
+      "pos": [
+        980,
+        380
+      ],
+      "size": [
+        150,
+        50
+      ]
+    },
+    {
+      "id": "metric",
+      "type": "backend",
+      "label": "/metrics",
+      "sublabel": "Prometheus + dashboard",
+      "pos": [
+        980,
+        470
+      ],
+      "size": [
+        150,
+        50
+      ]
+    },
+    {
+      "id": "bk",
+      "type": "database",
+      "label": "backups/",
+      "sublabel": "SQLite 在线备份 24h",
+      "pos": [
+        810,
+        470
+      ],
+      "size": [
+        150,
+        50
+      ],
+      "tag": "保留 7 份"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Maestro 进程",
+      "wraps": [
+        "cli",
+        "web",
+        "chat",
+        "guard",
+        "orch",
+        "hitl",
+        "pool",
+        "embed",
+        "open",
+        "octo",
+        "wkb",
+        "code",
+        "runcmd",
+        "sand",
+        "llm",
+        "db",
+        "config",
+        "ws",
+        "metric",
+        "bk"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "user-cli",
+      "from": "user",
+      "to": "cli",
+      "label": "命令"
+    },
+    {
+      "id": "user-web",
+      "from": "user",
+      "to": "web",
+      "label": "HTTPS / WS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "web-orch",
+      "from": "web",
+      "to": "orch",
+      "variant": "emphasis"
+    },
+    {
+      "id": "web-chat",
+      "from": "web",
+      "to": "chat",
+      "variant": "emphasis"
+    },
+    {
+      "id": "web-pool",
+      "from": "web",
+      "to": "pool",
+      "label": "submit"
+    },
+    {
+      "id": "orch-split",
+      "from": "orch",
+      "to": "orch",
+      "label": "split / merge",
+      "variant": "dashed"
+    },
+    {
+      "id": "embed-llm",
+      "from": "embed",
+      "to": "llm",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "入口层",
+      "items": [
+        "CLI 命令行入口",
+        "Web FastAPI + WebSocket",
+        "Chat 流式闲聊（历史落库 SQLite）",
+        "Guard 防线 1（恶意 prompt 拦截）"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "编排层",
+      "items": [
+        "Orchestrator 状态机 + split / merge（结果落 SQLite）",
+        "HITL 闸门（pending → ready → running）",
+        "快/慢线程池（fast 拆分 / slow 执行，防饿死）",
+        "外部 CLI worker 派发前过 Guard 防线 1"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Worker 与防线 2",
+      "items": [
+        "Embedded / OpenCode / Octo / WorkBuddy / CodeBuddy",
+        "全部 worker 的 bin 路径来自 configs/workers.json",
+        "runcmd 白名单（Windows 内建自动 cmd /c 包裹）",
+        "Sandbox 越权审批流（approve / reject / timedout，WS 实时推送）",
+        "SQLite 每 24h 在线备份，保留 7 份"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "LLM & 状态",
+      "items": [
+        "多 provider 弹性（重试 / 限流 / 熔断）——Chat 与 Embedded worker 都走它",
+        "SQLite WAL 主库（任务/事件/聊天历史统一落库）",
+        "WS 订阅推送（聊天 / 任务 / 审批）",
+        "/metrics + /api/health/dashboard（Web 状态卡 5s 拉取）",
+        "configs/ + backups/（24h 保留 7 份）"
+      ]
+    }
+  ]
+}

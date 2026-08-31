@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Maestro 全局架构鸟瞰</title>
+<style>
+  :root{
+    --ink:#1d2138; --ink-soft:#525775; --line:#c4cadd; --bg:#f4f5fb;
+    --entry:#5b6bb5; --orch:#7c5dd3; --worker:#2f7fd6; --llm:#0e9b87;
+    --safe:#d27750; --data:#a16cbf; --chat:#c8953e; --model:#b04862;
+  }
+  html,body{margin:0;background:var(--bg);font-family:"Segoe UI","PingFang SC",sans-serif;color:var(--ink)}
+  .wrap{padding:24px;display:flex;justify-content:center}
+  svg{width:100%;max-width:1080px;height:auto;background:#fff;border-radius:16px;
+      box-shadow:0 8px 24px rgba(29,33,56,.08);padding:18px}
+  h1{font-size:18px;margin:0 0 12px 4px;font-weight:600;letter-spacing:.5px}
+  .legend{display:flex;gap:12px;font-size:11.5px;color:var(--ink-soft);flex-wrap:wrap;margin:8px 4px 0}
+  .chip{display:inline-flex;align-items:center;gap:5px}
+  .dot{width:10px;height:10px;border-radius:50%}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div>
+    <h1>Maestro 全局架构（运行时数据流）</h1>
+    <svg viewBox="0 0 1060 620" xmlns="http://www.w3.org/2000/svg" font-family="inherit" font-size="12">
+      <!-- lane backgrounds -->
+      <rect x="10"  y="20"  width="280" height="580" rx="12" fill="#eef1fb"/>
+      <rect x="300" y="20"  width="220" height="580" rx="12" fill="#f1ecf8"/>
+      <rect x="530" y="20"  width="280" height="580" rx="12" fill="#eaf3fb"/>
+      <rect x="820" y="20"  width="230" height="580" rx="12" fill="#fbeeee"/>
+
+      <text x="30"  y="46" fill="#5b6bb5" font-weight="700">入口层</text>
+      <text x="320" y="46" fill="#7c5dd3" font-weight="700">编排层</text>
+      <text x="550" y="46" fill="#2f7fd6" font-weight="700">执行层 / Worker</text>
+      <text x="840" y="46" fill="#d27750" font-weight="700">模型 & 状态层</text>
+
+      <!-- 入口层 nodes -->
+      <g>
+        <rect x="40"  y="80"  width="220" height="60" rx="10" fill="#fff" stroke="#5b6bb5"/>
+        <text x="150" y="105" text-anchor="middle" font-weight="600">CLI（cli.py）</text>
+        <text x="150" y="122" text-anchor="middle" fill="#525775" font-size="11">命令行入口</text>
+
+        <rect x="40"  y="160" width="220" height="60" rx="10" fill="#fff" stroke="#5b6bb5"/>
+        <text x="150" y="185" text-anchor="middle" font-weight="600">Web Server（server.py）</text>
+        <text x="150" y="202" text-anchor="middle" fill="#525775" font-size="11">FastAPI + WebSocket</text>
+      </g>
+
+      <!-- 数字人聊天块 -->
+      <g>
+        <rect x="40"  y="260" width="220" height="60" rx="10" fill="#fff" stroke="#c8953e"/>
+        <text x="150" y="285" text-anchor="middle" font-weight="600">Chat（chat.py）</text>
+        <text x="150" y="302" text-anchor="middle" fill="#525775" font-size="11">数字人闲聊 / 流式 SSE</text>
+
+        <rect x="40"  y="360" width="220" height="60" rx="10" fill="#fff" stroke="#b04862"/>
+        <text x="150" y="385" text-anchor="middle" font-weight="600">Models / Keys</text>
+        <text x="150" y="402" text-anchor="middle" fill="#525775" font-size="11">provider / api_key / model</text>
+      </g>
+
+      <!-- 安全防线 (防线1) -->
+      <g>
+        <rect x="40" y="470" width="220" height="60" rx="10" fill="#fff" stroke="#d27750" stroke-width="1.5"/>
+        <text x="150" y="495" text-anchor="middle" font-weight="600">Guard（guard.py）</text>
+        <text x="150" y="512" text-anchor="middle" fill="#525775" font-size="11">防线 1 · 静态规则扫描</text>
+        <rect x="40" y="540" width="220" height="40" rx="8" fill="#fff7ee" stroke="#d27750"/>
+        <text x="150" y="565" text-anchor="middle" fill="#a05a30" font-size="10.5">block / warn / ok</text>
+      </g>
+
+      <!-- 编排层 -->
+      <g>
+        <rect x="320" y="80" width="180" height="50" rx="9" fill="#fff" stroke="#7c5dd3" stroke-width="1.5"/>
+        <text x="410" y="102" text-anchor="middle" font-weight="700" fill="#7c5dd3">Orchestrator</text>
+        <text x="410" y="118" text-anchor="middle" fill="#525775" font-size="10.5">orchestrator.py</text>
+
+        <rect x="320" y="155" width="180" height="55" rx="9" fill="#fff" stroke="#7c5dd3"/>
+        <text x="410" y="178" text-anchor="middle" font-weight="600">Split</text>
+        <text x="410" y="193" text-anchor="middle" fill="#525775" font-size="10.5">场景 A / B / C / auto</text>
+
+        <rect x="320" y="225" width="180" height="55" rx="9" fill="#fff" stroke="#7c5dd3"/>
+        <text x="410" y="248" text-anchor="middle" font-weight="600">Merge</text>
+        <text x="410" y="263" text-anchor="middle" fill="#525775" font-size="10.5">汇总 + 冲突裁决</text>
+
+        <rect x="320" y="295" width="180" height="55" rx="9" fill="#fff" stroke="#a16cbf"/>
+        <text x="410" y="318" text-anchor="middle" font-weight="600">Split → Workers</text>
+        <text x="410" y="333" text-anchor="middle" fill="#525775" font-size="10.5">round-robin 分发</text>
+
+        <!-- 闸门 -->
+        <rect x="320" y="370" width="180" height="65" rx="9" fill="#fffbf0" stroke="#b48c19" stroke-width="1.5"/>
+        <text x="410" y="395" text-anchor="middle" font-weight="700" fill="#b48c19">HITL 闸门</text>
+        <text x="410" y="412" text-anchor="middle" fill="#525775" font-size="10.5">pending → ready → running</text>
+        <text x="410" y="425" text-anchor="middle" fill="#525775" font-size="10">用户编辑后再 execute</text>
+      </g>
+
+      <!-- 后台线程 -->
+      <g>
+        <rect x="320" y="465" width="180" height="115" rx="9" fill="#fff" stroke="#7c5dd3" stroke-dasharray="4 3"/>
+        <text x="410" y="490" text-anchor="middle" font-weight="600" fill="#7c5dd3">后台线程池</text>
+        <text x="410" y="510" text-anchor="middle" fill="#525775" font-size="10.5">Fast 池：prepare（拆分）</text>
+        <text x="410" y="527" text-anchor="middle" fill="#525775" font-size="10.5">Slow 池：execute / retry / resume</text>
+        <text x="410" y="544" text-anchor="middle" fill="#525775" font-size="10.5">每小时 SQLite 在线备份</text>
+        <text x="410" y="565" text-anchor="middle" fill="#525775" font-size="10.5">清理 30 天前 task_events</text>
+      </g>
+
+      <!-- 执行层 / Worker -->
+      <g>
+        <rect x="550" y="80" width="120" height="60" rx="10" fill="#fff" stroke="#2f7fd6"/>
+        <text x="610" y="105" text-anchor="middle" font-weight="600">Embedded</text>
+        <text x="610" y="122" text-anchor="middle" fill="#525775" font-size="10.5">内置 LLM + 工具</text>
+
+        <rect x="690" y="80" width="120" height="60" rx="10" fill="#fff" stroke="#2f7fd6"/>
+        <text x="750" y="105" text-anchor="middle" font-weight="600">OpenCode</text>
+        <text x="750" y="122" text-anchor="middle" fill="#525775" font-size="10.5">subprocess</text>
+
+        <rect x="550" y="160" width="120" height="60" rx="10" fill="#fff" stroke="#2f7fd6"/>
+        <text x="610" y="185" text-anchor="middle" font-weight="600">Octo</text>
+        <text x="610" y="202" text-anchor="middle" fill="#525775" font-size="10.5">subprocess</text>
+
+        <rect x="690" y="160" width="120" height="60" rx="10" fill="#fff" stroke="#2f7fd6"/>
+        <text x="750" y="185" text-anchor="middle" font-weight="600">WorkBuddy</text>
+        <text x="750" y="202" text-anchor="middle" fill="#525775" font-size="10.5">subprocess</text>
+
+        <rect x="550" y="240" width="120" height="60" rx="10" fill="#fff" stroke="#2f7fd6"/>
+        <text x="610" y="265" text-anchor="middle" font-weight="600">CodeBuddy</text>
+        <text x="610" y="282" text-anchor="middle" fill="#525775" font-size="10.5">cmd /c 包装</text>
+
+        <rect x="690" y="240" width="120" height="60" rx="10" fill="#fff" stroke="#2f7fd6"/>
+        <text x="750" y="265" text-anchor="middle" font-weight="600">MiniMax</text>
+        <text x="750" y="282" text-anchor="middle" fill="#525775" font-size="10.5">node mmx</text>
+      </g>
+
+      <!-- Worker 内部：Embedded 展开 -->
+      <g>
+        <rect x="550" y="320" width="260" height="120" rx="10" fill="#eef6fc" stroke="#2f7fd6" stroke-dasharray="3 2"/>
+        <text x="680" y="345" text-anchor="middle" fill="#2f7fd6" font-weight="700">Embedded Worker 内部</text>
+        <rect x="565" y="360" width="115" height="32" rx="6" fill="#fff" stroke="#2f7fd6"/>
+        <text x="622" y="380" text-anchor="middle" font-size="11">runcmd（白名单）</text>
+        <rect x="690" y="360" width="105" height="32" rx="6" fill="#fff" stroke="#2f7fd6"/>
+        <text x="742" y="380" text-anchor="middle" font-size="11">filetools</text>
+        <rect x="565" y="400" width="230" height="32" rx="6" fill="#fff7ee" stroke="#d27750" stroke-width="1.5"/>
+        <text x="680" y="420" text-anchor="middle" font-size="11" fill="#a05a30">Sandbox（防线 2 · 越权审批）</text>
+      </g>
+
+      <!-- LLM 弹性层 -->
+      <g>
+        <rect x="550" y="465" width="260" height="115" rx="10" fill="#fff" stroke="#0e9b87"/>
+        <text x="680" y="490" text-anchor="middle" font-weight="700" fill="#0e9b87">LLM 弹性（llm.py + resilience.py）</text>
+        <text x="680" y="510" text-anchor="middle" fill="#525775" font-size="10.5">多 provider：DeepSeek / Kimi / MiniMax</text>
+        <text x="680" y="527" text-anchor="middle" fill="#525775" font-size="10.5">client 复用 + 全局 10 QPS 限流 + 熔断</text>
+        <text x="680" y="544" text-anchor="middle" fill="#525775" font-size="10.5">仅瞬时故障重试（超时/网络/5xx）</text>
+        <text x="680" y="561" text-anchor="middle" fill="#525775" font-size="10.5">真 LLM 余额不足 → 任务 FAILED（不静默）</text>
+      </g>
+
+      <!-- 模型层 -->
+      <g>
+        <rect x="840" y="80" width="190" height="60" rx="10" fill="#fff" stroke="#0e9b87" stroke-width="1.5"/>
+        <text x="935" y="105" text-anchor="middle" font-weight="700" fill="#0e9b87">DeepSeek / Kimi / MiniMax</text>
+        <text x="935" y="122" text-anchor="middle" fill="#525775" font-size="10.5">多 LLM provider</text>
+
+        <rect x="840" y="160" width="190" height="65" rx="10" fill="#fff" stroke="#a16cbf" stroke-width="1.5"/>
+        <text x="935" y="185" text-anchor="middle" font-weight="700" fill="#a16cbf">SQLite（db.py）</text>
+        <text x="935" y="203" text-anchor="middle" fill="#525775" font-size="10.5">tasks / subtasks / events</text>
+        <text x="935" y="218" text-anchor="middle" fill="#525775" font-size="10.5">approvals / chat / user_skills</text>
+      </g>
+
+      <!-- WS + Metrics -->
+      <g>
+        <rect x="840" y="245" width="190" height="60" rx="10" fill="#fff" stroke="#5b6bb5"/>
+        <text x="935" y="270" text-anchor="middle" font-weight="600">WebSocket /ws</text>
+        <text x="935" y="287" text-anchor="middle" fill="#525775" font-size="10.5">订阅：chat / task / approval</text>
+
+        <rect x="840" y="320" width="190" height="60" rx="10" fill="#fff" stroke="#5b6bb5"/>
+        <text x="935" y="345" text-anchor="middle" font-weight="600">/metrics + /api/health/dashboard</text>
+        <text x="935" y="362" text-anchor="middle" fill="#525775" font-size="10.5">Prometheus + 状态面板</text>
+      </g>
+
+      <!-- 配置 / 前端 -->
+      <g>
+        <rect x="840" y="395" width="190" height="60" rx="10" fill="#fff" stroke="#a16cbf"/>
+        <text x="935" y="420" text-anchor="middle" font-weight="600">configs/*.json</text>
+        <text x="935" y="437" text-anchor="middle" fill="#525775" font-size="10.5">providers / workflows / skills / workers</text>
+
+        <rect x="840" y="470" width="190" height="60" rx="10" fill="#fff" stroke="#5b6bb5"/>
+        <text x="935" y="495" text-anchor="middle" font-weight="600">Web 前端（web/）</text>
+        <text x="935" y="512" text-anchor="middle" fill="#525775" font-size="10.5">HTML + app.js + style.css</text>
+      </g>
+
+      <!-- backups -->
+      <g>
+        <rect x="840" y="545" width="190" height="40" rx="8" fill="#fff" stroke="#a16cbf" stroke-dasharray="4 3"/>
+        <text x="935" y="570" text-anchor="middle" fill="#a16cbf" font-size="11">SQLite backups/ (24h 保留 7 份)</text>
+      </g>
+
+      <!-- 跨区连线：入口→编排 -->
+      <g fill="none" stroke="#5b6bb5" stroke-width="1.5" marker-end="url(#arrEntry)">
+        <defs>
+          <marker id="arrEntry" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#5b6bb5"/>
+          </marker>
+        </defs>
+        <path d="M260,110 C290,110 290,105 320,105"/>
+        <path d="M260,190 C290,190 290,182 320,182"/>
+        <path d="M150,320 L150,360 L410,360 L410,295" stroke-dasharray="3 3"/>
+      </g>
+
+      <!-- chat 独立连线 -->
+      <g fill="none" stroke="#c8953e" stroke-width="1.4">
+        <path d="M150,290 L150,320" marker-end="url(#arrChat)"/>
+        <defs>
+          <marker id="arrChat" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#c8953e"/>
+          </marker>
+        </defs>
+      </g>
+      <g fill="none" stroke="#c8953e" stroke-width="1.4" marker-end="url(#arrChat)">
+        <path d="M150,320 L935,110"/>
+      </g>
+
+      <!-- 编排 → Worker -->
+      <g fill="none" stroke="#7c5dd3" stroke-width="1.5" marker-end="url(#arrOrc)">
+        <defs>
+          <marker id="arrOrc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#7c5dd3"/>
+          </marker>
+        </defs>
+        <path d="M500,290 L520,290 L520,110 L550,110"/>
+        <path d="M500,290 L520,290 L520,190 L550,190"/>
+        <path d="M500,290 L550,190"/>
+      </g>
+
+      <!-- 编排 → Guard 防线1 -->
+      <g fill="none" stroke="#d27750" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arrGuard)">
+        <defs>
+          <marker id="arrGuard" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#d27750"/>
+          </marker>
+        </defs>
+        <path d="M320,470 L260,500"/>
+      </g>
+
+      <!-- Worker → LLM -->
+      <g fill="none" stroke="#0e9b87" stroke-width="1.4" marker-end="url(#arrLLM)">
+        <defs>
+          <marker id="arrLLM" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#0e9b87"/>
+          </marker>
+        </defs>
+        <path d="M680,440 L680,465"/>
+      </g>
+
+      <!-- 编排 → DB -->
+      <g fill="none" stroke="#a16cbf" stroke-width="1.4" marker-end="url(#arrDB)">
+        <defs>
+          <marker id="arrDB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#a16cbf"/>
+          </marker>
+        </defs>
+        <path d="M500,210 L840,200"/>
+      </g>
+
+      <!-- Server → WS / Metrics -->
+      <g fill="none" stroke="#5b6bb5" stroke-width="1.2" marker-end="url(#arrEntry)" stroke-dasharray="2 2">
+        <path d="M260,200 L840,270"/>
+        <path d="M260,230 L840,350"/>
+      </g>
+
+      <!-- 前端 → Server (双向) -->
+      <g fill="none" stroke="#5b6bb5" stroke-width="1.3">
+        <path d="M935,470 L935,400 L935,400" stroke-dasharray="2 2"/>
+      </g>
+    </svg>
+    <div class="legend">
+      <span class="chip"><span class="dot" style="background:var(--entry)"></span>入口层 / API</span>
+      <span class="chip"><span class="dot" style="background:var(--orch)"></span>编排层</span>
+      <span class="chip"><span class="dot" style="background:var(--worker)"></span>Worker</span>
+      <span class="chip"><span class="dot" style="background:var(--llm)"></span>LLM 弹性</span>
+      <span class="chip"><span class="dot" style="background:var(--safe)"></span>双层防线</span>
+      <span class="chip"><span class="dot" style="background:var(--data)"></span>数据 / 配置</span>
+      <span class="chip"><span class="dot" style="background:var(--chat)"></span>Chat</span>
+      <span class="chip"><span class="dot" style="background:var(--model)"></span>Models</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>

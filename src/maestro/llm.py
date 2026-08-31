@@ -19,6 +19,30 @@ from . import config, resilience
 
 _DEFAULT_PROVIDER = "deepseek"
 
+# 按 (provider, key, base_url) 缓存 OpenAI client：避免每次调用新建
+# （每个 client 自带独立 httpx 连接池，反复新建会重复 TLS 握手）。
+# key 变化（如测试 setenv）会生成新缓存条目，天然正确。
+_client_cache: dict[tuple[str, str, str], OpenAI] = {}
+
+
+def _cached_client(provider: str, api_key: str, base_url: str) -> OpenAI:
+    cache_key = (provider, api_key, base_url)
+    client = _client_cache.get(cache_key)
+    if client is None:
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        _client_cache[cache_key] = client
+    return client
+
+
+def reset_client_cache() -> None:
+    """测试用：清空 client 缓存（close 底层连接，避免 fd 泄漏）。"""
+    for c in _client_cache.values():
+        try:
+            c.close()
+        except Exception:  # noqa: BLE001
+            pass
+    _client_cache.clear()
+
 
 def _resolve(model: str | None) -> tuple[str, str]:
     """把 model 解析为 (provider, model_name)。支持 "provider:model"。
@@ -60,7 +84,7 @@ def get_client(provider: str = _DEFAULT_PROVIDER) -> tuple[OpenAI, str]:
     key = os.environ.get(key_env)
     if not key:
         raise RuntimeError(f"缺少 {key_env} 环境变量（provider={provider}）")
-    return OpenAI(api_key=key, base_url=base_url), default_model
+    return _cached_client(provider, key, base_url), default_model
 
 
 def _raw_chat(client, model_name, messages, temperature=0.2, tools=None):

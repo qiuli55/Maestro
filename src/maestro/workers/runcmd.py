@@ -36,6 +36,17 @@ _ALLOWED_COMMANDS = {
     "set",
 }
 
+# cmd.exe 内建命令（Windows 上没有同名 exe，必须经 cmd /c 间接调用）；
+# shell=False 模式下 subprocess.run(["cmd.exe","/c",...]) 走 CreateProcessW
+# argv 直接传递，shell 解析完全跳过，安全等同。非 Windows 平台无此概念。
+if sys.platform == "win32":
+    _CMD_BUILTINS = {
+        "dir", "type", "echo", "whoami", "ver", "hostname",
+        "path", "set", "tree", "findstr",
+    }
+else:
+    _CMD_BUILTINS = set()
+
 # 白名单内 git 允许的子命令（只读）。git clone/push/pull 等会改状态，归审批。
 _ALLOWED_GIT_SUB = {
     "status",
@@ -252,6 +263,14 @@ def run(cmd: str, workdir: str, task_id: str | None = None, subtask_id: str | No
     argv = _split_cmd(cmd)
     if not argv:
         return "[run_command 失败] 无法解析命令参数。"
+
+    # Windows 内建命令（dir/type/echo/...）在 PATH 下没有同名 exe，
+    # 必须经 cmd.exe /c 间接调用——subprocess 直接传给 CreateProcessW 的 argv，
+    # shell 解析完全跳过，安全等同。仅检查一次（避免重复 dispatch）。
+    name = _command_name(cmd)
+    if (sys.platform == "win32" and name in _CMD_BUILTINS
+            and argv[0].lower() not in ("cmd", "cmd.exe")):
+        argv = ["cmd.exe", "/c", *argv]
 
     # Windows：补全 .exe 后缀便于 PATH 查找（系统 PATH 下 dir.exe / git.exe / etc.）。
     # shlex 已经按原样保留 .exe 不变，未带的后缀靠 PATH 解析，subprocess.run 不依赖后缀。

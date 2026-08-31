@@ -11,7 +11,10 @@ from pathlib import Path
 
 import yaml
 
-_ROOT = Path(__file__).resolve().parents[2]
+# 项目根：通过 runtime 统一解析（源码 vs PyInstaller 打包路径都正确）
+from . import runtime as _runtime_mod  # noqa: F401 循环导入兜底
+
+_ROOT = _runtime_mod.project_root()
 _PROMPTS_PATH = _ROOT / "configs" / "prompts.yaml"
 _WORKERS_PATH = _ROOT / "configs" / "workers.json"
 _PROVIDERS_PATH = _ROOT / "configs" / "providers.json"
@@ -49,6 +52,72 @@ def apply_worker_bins():
 
 
 PROMPTS = load_prompts()
+
+
+_WORKFLOWS_PATH = _ROOT / "configs" / "workflows.json"
+_SKILLS_PATH = _ROOT / "configs" / "skills.json"
+
+
+def load_skills() -> list[dict]:
+    """内置技能目录：{id,name,category,snippet}。缺失/损坏返回空列表。"""
+    try:
+        cfg = json.loads(_SKILLS_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+    out = []
+    for s in cfg.get("skills") or []:
+        if not s.get("name"):
+            continue
+        out.append({
+            "id": str(s.get("id") or s["name"]),
+            "name": str(s["name"])[:30],
+            "category": str(s.get("category") or "通用"),
+            "snippet": str(s.get("snippet") or "")[:300],
+        })
+    return out
+
+# 工作流字段白名单与默认值（缺字段时回退，避免脏配置打崩任务链路）
+_WF_DEFAULTS = {
+    "icon": "🎬",
+    "desc": "",
+    "scenario": "auto",
+    "parallel": True,
+    "workers": ["embedded"],
+    "model": None,
+    "confirm": False,
+    "no_merge": False,
+}
+
+
+def load_workflows() -> list[dict]:
+    """加载工作流库（任务处理模板）。
+
+    每条：{id,name,icon,desc,scenario,parallel,workers,model,confirm,no_merge}。
+    文件缺失/JSON 损坏/条目缺 id|name 时跳过——配置错误不能打崩服务。
+    """
+    try:
+        cfg = json.loads(_WORKFLOWS_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+    out: list[dict] = []
+    for wf in cfg.get("workflows") or []:
+        if not wf.get("id") or not wf.get("name"):
+            continue
+        item = dict(_WF_DEFAULTS)
+        item.update({k: wf[k] for k in item if wf.get(k) is not None})
+        item["id"] = str(wf["id"])
+        item["name"] = str(wf["name"])
+        item["workers"] = [str(x) for x in (wf.get("workers") or item["workers"])]
+        out.append(item)
+    return out
+
+
+def resolve_workflow(wf_id: str) -> dict | None:
+    """按 id 取工作流定义；不存在返回 None。"""
+    for wf in load_workflows():
+        if wf["id"] == wf_id:
+            return wf
+    return None
 
 
 _KEYS_PATH = _ROOT / "configs" / "keys.json"

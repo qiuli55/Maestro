@@ -4,10 +4,9 @@
 
 > *"Don't make one agent do everything. Make many agents do a little, then merge."*
 
-[![Tests](https://img.shields.io/badge/tests-132%20passed-brightgreen)]()
-[![Python](https://img.shields.io/badge/python-3.13-blue)]()
+[![Tests](https://img.shields.io/badge/tests-523%20passed-brightgreen)]()
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
-[![Status](https://img.shields.io/badge/status-P2-orange)]()
 
 ---
 
@@ -16,155 +15,118 @@
 **Maestro** 是一个**把多 Agent 编排器藏进桌面壁纸**的实验性项目：
 
 - 🧠 **拆分-汇总（Map-Reduce）**：长任务拆成子任务、并行/串行派发给不同 worker、合并汇总
-- 🛡️ **WorkBuddy 沙箱**：执行前 prompt 静态扫描 + 越权命令人工审批流（双层防线）
-- 🎨 **Live2D 数字人**：桌面壁纸里的芙莉莲，陪你聊天 + 派任务
-- 🔌 **多 Worker 注册**：OpenCode / Octo / Embedded / MiniMax 等即插即用
-- 🗃️ **SQLite 状态机**：任务 / 子任务 / 事件 / 审批全部落库，断点续跑 + 全程可审计
+- 🧩 **可视化工作流编排**：环节→卡片，点卡片亮/暗启用，⚙ 配置智能体/模型/任务/技能；环节间串行、环节内并行，上一环节产出自动注入下一环节
+- 🛡️ **双层安全防线**：guard.py 静态扫描 + sandbox.py 越权审批流（审批卡片实时推送到聊天窗口）
+- 💬 **聊天窗口**：Markdown 渲染、打字指示、消息操作（复制/重发/引用）、跨对话上下文关联
+- 🪟 **多窗口系统**：合并为多标签大窗口、Tab 拖出还原、历史回灌、窗口状态持久化
+- 🖼️ **桌面壁纸模式**（Windows）：透明壁纸层挂 WorkerW（鼠标穿透、不抢焦点）+ PyWebView 主交互窗口
+- 🔌 **可插拔 Worker**：embedded（本地 LLM+工具）/ opencode / octo / codebuddy / workbuddy / minimax（图/视频/语音/音乐）
+- 🗃️ **SQLite 状态机**：任务/子任务/事件/审批全部落库，断点续跑 + 全程可审计
 
----
+## ✨ 亮点
 
-## ✨ 5 个最值得说的设计
-
-| # | 亮点 | 为什么重要 |
+| # | 亮点 | 说明 |
 |---|---|---|
-| 1 | **Orchestrator-Workers 完整状态机**（pending/ready/running/done/failed/retry/cancelled）| 业界 LangGraph / CrewAI / AutoGen 都是这个模式，Maestro 用 ~1400 行自己实现且无外部依赖 |
-| 2 | **任务级人工闸门**（拆分后 stop at READY，等用户确认/编辑再 execute）| LangGraph 同样能力用 `interrupt_before`；Maestro 把它做成了一等公民 |
-| 3 | **双层安全防线**（① guard.py 静态扫描外部 CLI prompt；② sandbox.py 越权命令审批流）| WorkBuddy 的核心模型：**默认受限 + 越权必须批准**。开源框架几乎没有对应实现 |
-| 4 | **可插拔 Worker 协议**（`spawn(prompt, workdir, timeout, task_id, subtask_id) → WorkerResult`）| 加新 worker 只需继承 `SubprocessWorker` + 实现 `build_command` |
-| 5 | **架构图状态可视化**（WebSocket 实时推送 + Mermaid 状态机）| 任务进度全可观测，不用 SSH 上服务器查 SQLite |
+| 1 | Orchestrator-Workers 状态机 | pending/ready/running/done/failed/retry/cancelled 全落库，人工闸门一等公民 |
+| 2 | 工作流卡片编排器 | 环节分色、卡片亮暗启用、技能自动分类（设计/代码/文档/视频/音频/数据/网络） |
+| 3 | 环节间数据传递 | 前一环节产出自动注入下一环节（4000 字上限防上下文爆炸） |
+| 4 | 双层安全 | guard 静态扫描外部 CLI prompt + sandbox 越权审批（WS 实时推送审批卡片） |
+| 5 | 生产化底座 | /metrics（Prometheus）、SQLite 在线备份（24h/保留7份）、限流/熔断/重试分级、快慢线程池 |
 
----
+## 🚀 快速开始
 
-## 🚀 一键启动
+### 源码运行
 
 ```bash
-# 1. 装依赖
 pip install -r requirements.txt
-
-# 2. 配 .env（DeepSeek + MiniMax keys）
-cp .env.example .env
-# 编辑 .env，至少填 DEEPSEEK_API_KEY
-
-# 3. 起服务
+cp .env.example .env   # 填 DEEPSEEK_API_KEY
 cd src && python -m maestro.server
-# → 浏览器打开 http://127.0.0.1:8787
+# 打开 http://127.0.0.1:8787
 ```
 
-**进阶**：Docker 启动、可观测面板、Tailwind UI 详见 [QUICKSTART.md](docs/QUICKSTART.md)。
+### 桌面版（Windows）
 
----
+```bash
+pip install pyinstaller pywebview
+python packaging/build.py
+# 双击 dist/Maestro/Maestro.exe
+```
 
-## 📸 截图
+详见 [packaging/README.md](packaging/README.md)。
 
-> ⚠️ 占位——Frieren 壁纸 + 桌宠截图待补
+### Docker
 
-| 首页（芙莉莲壁纸 + 输入框） | 任务窗口（WebSocket 实时进度） |
-|---|---|
-| `![home](docs/img/home.png)` | `![task](docs/img/task.png)` |
-
----
+```bash
+docker compose up -d    # 0.0.0.0:8787；生产请设 MAESTRO_API_KEY
+```
 
 ## 🏗️ 架构（5 分钟看懂）
 
 ```mermaid
 graph LR
     User[用户] -->|输入需求| WebUI[web/index.html]
-    WebUI -->|POST /api/tasks| Server[server.py]
-    Server -->|prepare_task| Orchestrator[orchestrator.py]
-    Orchestrator -->|split| Split[split.py<br/>场景 A/B/C]
-    Split -->|子任务列表| DB[(SQLite<br/>tasks/subtasks/events)]
-    Orchestrator -->|HITL 闸门<br/>status=ready| Server
-    User -->|PUT /subtasks<br/>编辑后 confirm| Server
-    Server -->|execute_task| Orchestrator
-    Orchestrator -->|ThreadPoolExecutor| Workers{Workers}
-    Workers --> OpenCode[opencode]
-    Workers --> Octo[octo]
-    Workers --> Embedded[embedded<br/>+审批流]
-    Workers --> MiniMax[minimax]
-    Orchestrator -->|guard.py 扫描| Guard[防线1<br/>静态规则]
-    Workers -->|越权命令| Sandbox[sandbox.py<br/>防线2<br/>审批流]
-    Orchestrator -->|merge| Merge[merge.py<br/>冲突裁决/去重]
-    Merge -->|summary.md| User
+    WebUI -->|POST /api/tasks| Server[server.py 组装器]
+    Server --> Router[api/ 按域路由]
+    Router -->|prepare_task| Orchestrator[orchestrator.py]
+    Orchestrator -->|split| Split[split.py 场景 A/B/C/auto]
+    Orchestrator -->|HITL 闸门 ready| Server
+    Server -->|execute_task| Workers{Workers}
+    Workers --> Embedded[embedded 本地LLM+工具]
+    Workers --> OpenCode / Octo / CodeBuddy / WorkBuddy / MiniMax
+    Orchestrator -->|guard.py 扫描| Guard[防线1 静态规则]
+    Workers -->|越权命令| Sandbox[sandbox.py 防线2 审批流]
+    Sandbox -->|WS 实时推送| WebUI
+    Orchestrator -->|merge| Merge[merge.py 汇总+审计]
 ```
 
-**数据流**：用户 prompt → 拆分 → 入库 → **闸门** → 派发 → Worker 执行 → 合并 → 结果回推。
+**代码结构**（后端 ~5600 行 + 前端 ~2700 行）：
 
-详见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)（模块依赖、状态机、与 LangGraph 对比）。
+```
+src/maestro/
+├── server.py            # FastAPI 组装器（中间件/路由注册/静态挂载）
+├── api/                 # 按域路由：tasks / workflows / meta / chat / conversations / ws / deps
+├── orchestrator.py      # 状态机（串行/并行/工作流 stage 分组）
+├── split.py / merge.py  # 拆分（A/B/C/auto）/ 汇总+审计
+├── chat.py / llm.py     # 数字人闲聊（SSE 流式）/ 多 provider LLM 封装
+├── skills.py            # 技能库（自动分类 + snippet 注入）
+├── guard.py / sandbox.py # 双层安全
+├── resilience.py        # 重试/熔断/全局限流
+├── db.py                # SQLite 状态层（迁移/备份/连接池）
+├── metrics.py           # /metrics 指标采集
+├── runtime.py           # 源码/打包路径解析
+├── desktop.py           # Windows WorkerW 壁纸层（非 Win stub）
+├── launcher.py          # 桌面启动器（PyWebView 双窗口）
+└── workers/             # 可插拔 worker（base/embedded/runcmd/filetools/minimax/...）
 
----
+web/
+├── index.html           # 结构标记（143 行）
+├── style.css            # 样式（460 行）
+└── app.js               # 窗口系统/聊天/工作流编排/仪表盘（2100 行）
+```
 
-## 🧪 跑测试
+## 🧪 测试
 
 ```bash
-pytest tests/ -q                           # 132 测试
-pytest tests/ --cov=src --cov-report=term  # 覆盖率
+pytest tests/ -q                    # 520+ 单元/集成测试
+pytest tests/test_e2e_smoke.py -q   # Playwright 浏览器冒烟（需 playwright）
+pytest tests/ --cov=src --cov-report=term
 ```
 
----
+## 📚 文档
 
-## 🗂️ 项目结构
-
-```
-Maestro/
-├── src/maestro/                # 后端核心（~1400 行）
-│   ├── orchestrator.py         # Orchestrator-Workers 调度
-│   ├── split.py                # 拆分（A/B/C/auto 四场景）
-│   ├── merge.py                # 汇总 + 冲突裁决
-│   ├── workers/                # 可插拔 worker 池
-│   │   ├── base.py             # SubprocessWorker 协议
-│   │   ├── embedded.py         # 进程内 DeepSeek + 工具
-│   │   ├── opencode.py         # E:\tools\opencode
-│   │   ├── octo.py             # E:\tools\octo
-│   │   └── minimax.py          # mmx CLI（文本/图片/视频/语音/音乐）
-│   ├── sandbox.py              # WorkBuddy 沙箱：审批中心
-│   ├── guard.py                # 防线 1：静态规则扫描
-│   ├── db.py                   # SQLite 状态层
-│   ├── server.py               # FastAPI + WebSocket
-│   ├── chat.py                 # 数字人闲聊（含流式）
-│   └── llm.py                  # 多 provider（DeepSeek/Kimi/Anthropic）
-├── web/                        # 前端
-│   ├── index.html              # 芙莉莲壁纸 1:1 复刻 + 输入框
-│   └── pet_rig/                # 桌宠 PSD 切层 + 16 层骨架
-├── wallpaper/                  # 壁纸资源
-│   └── models/
-│       ├── frieren/            # 芙莉莲切层
-│       └── live2d/             # Live2D 桌宠（备份）
-├── tests/                      # 132 测试
-├── docs/
-│   ├── ARCHITECTURE.md         # 架构详解
-│   ├── QUICKSTART.md           # 3 步启动
-│   ├── PRE_PUSH_CHECKLIST.md   # 推前检查
-│   ├── LANGGRAPH_BORROW.md     # 借鉴 LangGraph supervisor 设计
-│   └── 多Agent编排中文精读.md   # 多 Agent 编排论文精读
-├── .github/workflows/ci.yml    # GitHub Actions
-├── pyproject.toml              # ruff + mypy + pytest
-└── requirements.txt
-```
-
----
+- [packaging/README.md](packaging/README.md) — 打包/桌面版运行说明
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 架构详解
+- [docs/QUICKSTART.md](docs/QUICKSTART.md) — 3 步启动
+- [.env.example](.env.example) — 全部环境变量说明
 
 ## 🛠️ 路线图
 
-- **P1** ✅ Orchestrator + Workers + 拆分/汇总基础
-- **P2** ✅ Web UI + 任务窗口 + 多 worker 注册
-- **P3** 🚧 壁纸层 / 数字人（Live2D / PSD 切层骨架）
-- **P4** 📅 语音口型同步
-- **P5** 📅 多模态扩展（视觉 / 视频）
-- **P6** 📅 商业化（个人作品 → SaaS）
-
----
-
-## 🤝 贡献
-
-提交 PR 前请读 [PRE_PUSH_CHECKLIST.md](docs/PRE_PUSH_CHECKLIST.md)：
-1. 工作树干净（`git status`）
-2. 密钥扫描（`git grep "sk-[A-Za-z0-9_-]{20,}"`）
-3. 历史扫描（`git log --all -p | grep key`）
-4. `.gitignore` 覆盖
-5. 远程同步状态
-6. **测试通过**（`pytest tests/`）
-
----
+- **P1** ✅ Orchestrator + Workers + 拆分/汇总
+- **P2** ✅ Web UI + 任务窗口 + 多 worker
+- **P3** ✅ 壁纸层 + 桌宠 + 双窗口架构（Windows）
+- **P4** ✅ 可视化工作流 + 环节数据传递 + 审批实时卡片
+- **P5** ✅ 生产化（安全/性能/可观测/打包）
+- **P6** 🚧 工作流运行视图（编排器面板实时状态）、历史消息增量同步、多模型路由
 
 ## 📜 许可证
 

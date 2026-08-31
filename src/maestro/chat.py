@@ -69,11 +69,43 @@ def _system_prompt() -> str:
     )
 
 
+def _linked_context_block(conn: sqlite3.Connection, link_conv_ids) -> str:
+    """把关联会话的最近几轮拼成参考上下文注入 system。
+
+    防失控上限：最多 4 个会话 x 6 条 x 每条 300 字。会话不存在或无历史则跳过。
+    """
+    if not link_conv_ids:
+        return ""
+    blocks: list[str] = []
+    for cid in list(link_conv_ids)[:4]:
+        conv = db.get_conversation(conn, cid)
+        if not conv:
+            continue
+        hist = db.get_chat_history(conn, limit=6, conv_id=cid)
+        lines = []
+        for h2 in hist:
+            if h2["role"] not in ("user", "assistant"):
+                continue
+            who = "用户" if h2["role"] == "user" else "你"
+            lines.append(f"{who}: {str(h2['content'])[:300]}")
+        if not lines:
+            continue
+        title = str(conv.get("title") or cid).strip()[:20]
+        blocks.append(f"【对话「{title}」最近内容】\n" + "\n".join(lines))
+    if not blocks:
+        return ""
+    return (
+        "\n\n【其他关联对话的上下文】（以下是你同时参与的其他对话的近期内容，"
+        "仅在与当前话题相关时自然引用，不要主动罗列）\n" + "\n\n".join(blocks) + "\n"
+    )
+
+
 def chat_stream(
     conn: sqlite3.Connection,
     message: str,
     conv_id: str = db.DEFAULT_CONV_ID,
     model: str | None = None,
+    link_conv_ids: list[str] | None = None,
 ):
     """流式闲聊（打字机效果）：yield ("delta", text) 增量 / ("error", msg) / ("done", reply)。
 
@@ -90,6 +122,10 @@ def chat_stream(
     profile = _profile_block(conn)
     if profile:
         system = system + "\n\n" + profile
+    # 跨对话关联：把用户勾选的其他会话最近几轮注入 system 作为参考上下文
+    linked = _linked_context_block(conn, link_conv_ids)
+    if linked:
+        system = system + linked
 
     history = db.get_chat_history(conn, limit=HISTORY_TURNS * 2, conv_id=conv_id)
     messages = [{"role": "system", "content": system}]
@@ -141,10 +177,11 @@ def chat(
     message: str,
     conv_id: str = db.DEFAULT_CONV_ID,
     model: str | None = None,
+    link_conv_ids: list[str] | None = None,
 ) -> str:
     """非流式闲聊（兼容/测试用）：内部走 chat_stream，累积完整回复。"""
     reply = ""
-    for kind, data in chat_stream(conn, message, conv_id=conv_id, model=model):
+    for kind, data in chat_stream(conn, message, conv_id=conv_id, model=model, link_conv_ids=link_conv_ids):
         if kind == "error":
             raise RuntimeError(data)
         if kind == "done":

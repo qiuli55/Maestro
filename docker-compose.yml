@@ -51,11 +51,6 @@ services:
         max-size: "10m"
         max-file: "3"
         # 容器 stdout 自动接 docker logs / docker compose logs
-    restart_policy:
-      condition: on-failure
-      delay: 5s
-      max_attempts: 5
-      window: 30s
 
 volumes:
   maestro-data:

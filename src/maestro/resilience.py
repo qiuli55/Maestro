@@ -145,34 +145,33 @@ class CircuitBreaker:
 # ====== RateLimiter ======
 
 class RateLimiter:
-    """每线程令牌桶限流。
+    """全局限流令牌桶（进程级，跨线程共享）。
 
-    每线程独立维护 last_refill + tokens。线程首次进入时初始化。
-    QPS=10 / burst=20 表示：每秒匀速放 10 个，瞬时最多 20 个。
+    之前每线程独立一桶：36 个线程峰值 = 36 × QPS，限流形同虚设。
+    现在用共享锁 + 共享桶：所有线程从同一个桶取令牌，QPS 是真正全局的。
     """
     def __init__(self, qps: float = 10.0, burst: int = 20):
         self.qps = qps
         self.burst = float(burst)
-        self._local = threading.local()
+        self._lock = threading.Lock()
+        self._tokens = float(burst)
+        self._last_refill = time.monotonic()
 
-    def _ensure_local(self) -> None:
-        if not hasattr(self._local, "tokens"):
-            self._local.tokens = self.burst
-            self._local.last_refill = time.monotonic()
+    def _refill(self, now: float) -> None:
+        self._tokens = min(self.burst, self._tokens + (now - self._last_refill) * self.qps)
+        self._last_refill = now
 
     def acquire(self, timeout=None) -> bool:
         """阻塞直到拿到。timeout=None 永久等，否则最多等 N 秒。"""
-        self._ensure_local()
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
             now = time.monotonic()
-            elapsed = now - self._local.last_refill
-            self._local.tokens = min(self.burst, self._local.tokens + elapsed * self.qps)
-            self._local.last_refill = now
-            if self._local.tokens >= 1.0:
-                self._local.tokens -= 1.0
-                return True
-            wait = (1.0 - self._local.tokens) / self.qps
+            with self._lock:
+                self._refill(now)
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return True
+                wait = (1.0 - self._tokens) / self.qps
             if deadline is not None and time.monotonic() + wait > deadline:
                 return False
             time.sleep(min(wait, 0.1))

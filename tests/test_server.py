@@ -386,3 +386,132 @@ def test_create_task_auto_fallback_on_error(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert r.json()["scenario"] == "a"
     assert "回退" in (r.json().get("detect_reason") or "")
+
+
+# ---------- P0：CSRF Origin 守卫 / WS 鉴权与订阅 ----------
+
+
+def test_csrf_origin_without_json_rejected(tmp_path, monkeypatch):
+    """跨源写请求（带 Origin）且非 application/json → 415（浏览器简单请求 CSRF 防线）。"""
+    monkeypatch.delenv("MAESTRO_API_KEY", raising=False)
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "m.db"))
+    c = TestClient(app)
+    r = c.post("/api/chat", content="hi",
+               headers={"Origin": "https://evil.example", "Content-Type": "text/plain"})
+    assert r.status_code == 415
+
+
+def test_csrf_no_origin_allowed(tmp_path, monkeypatch):
+    """无 Origin（curl/服务间调用）不受 CSRF 守卫影响。"""
+    monkeypatch.delenv("MAESTRO_API_KEY", raising=False)
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "m.db"))
+    c = TestClient(app)
+    r = c.post("/api/chat", content="hi", headers={"Content-Type": "text/plain"})
+    assert r.status_code != 415
+
+
+def test_ws_requires_key_when_set(tmp_path, monkeypatch):
+    """设了 MAESTRO_API_KEY：无 key 的 WS 连接被拒（4401），带 key 放行。"""
+    monkeypatch.setenv("MAESTRO_API_KEY", "secret123")
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "m.db"))
+    c = TestClient(app)
+    # 无 key：服务端在 accept 前 close(4401) -> 客户端侧抛 WebSocketDisconnect
+    rejected = False
+    try:
+        with c.websocket_connect("/ws") as ws:
+            ws.receive_text()
+    except Exception:
+        rejected = True  # close/断开都算拒绝
+    assert rejected, "无 key 的 WS 连接应被拒绝"
+    # 带 key：正常建立
+    with c.websocket_connect("/ws?key=secret123") as ws:
+        ws.send_text("ping")
+    # 错误 key：同样拒绝
+    rejected2 = False
+    try:
+        with c.websocket_connect("/ws?key=wrong") as ws:
+            ws.receive_text()
+    except Exception:
+        rejected2 = True
+    assert rejected2, "错误 key 的 WS 连接应被拒绝"
+    monkeypatch.delenv("MAESTRO_API_KEY")
+
+
+def test_ws_broadcast_respects_subscription(tmp_path, monkeypatch):
+    """订阅 A 会话的连接只收 A 的消息；未订阅连接收全部（兼容）。"""
+    import asyncio
+
+    import maestro.server as srv
+
+    async def scenario():
+        # 直接操作订阅表验证过滤逻辑（不做真实握手，聚焦路由语义）
+        class FakeWS:
+            def __init__(self):
+                self.sent = []
+
+        ws = FakeWS()
+        with srv._ws_lock:
+            srv._active_ws_connections.append(ws)
+            srv._ws_subscriptions[ws] = {"conv_A"}
+        assert srv._ws_wants(ws, "conv_A") is True
+        assert srv._ws_wants(ws, "conv_B") is False
+        # 全收模式
+        srv._ws_subscriptions[ws] = {"__all__"}
+        assert srv._ws_wants(ws, "conv_B") is True
+        with srv._ws_lock:
+            srv._active_ws_connections.remove(ws)
+            srv._ws_subscriptions.pop(ws, None)
+
+    asyncio.run(scenario())
+
+
+def test_approval_push_hook_registered():
+    """sandbox.on_request 钩子已注册（审批实时推送不再依赖 2s 轮询）。"""
+    from maestro import sandbox
+
+    assert len(sandbox._notify_hooks) >= 1
+
+
+def test_metrics_endpoint(tmp_path, monkeypatch):
+    """/metrics 返回 Prometheus 文本与 JSON 两种格式，含核心指标。"""
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "m.db"))
+    c = TestClient(app)
+    r = c.get("/metrics")
+    assert r.status_code == 200
+    assert "text/plain" in r.headers["content-type"]
+    assert "maestro_tasks_total" in r.text
+    assert "maestro_ws_connections" in r.text
+    rj = c.get("/metrics?format=json")
+    assert rj.status_code == 200
+    data = rj.json()
+    assert "tasks_total" in data and "uptime_seconds" in data and "pool" in data
+
+
+def test_health_dashboard_endpoint(tmp_path, monkeypatch):
+    """/api/health/dashboard：状态 + 任务分布 + 待审批 + WS + 错误列表。"""
+    from fastapi.testclient import TestClient
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "m.db"))
+    # 造点数据：有任务 + 失败子任务 + 事件错误 + 待审批
+    from maestro import db, sandbox
+    conn = db.init_db(tmp_path / "m.db")
+    db.create_task(conn, "t_dash", "prompt", conv_id=None)
+    db.set_task_status(conn, "t_dash", db.FAILED)
+    db.log_event(conn, "t_dash", "subtask FAIL")
+    db.upsert_user_skill(conn, "sk_t", "测试技能", "通用", "")
+    sandbox.on_request(lambda r: None)  # 不重要
+    conn.execute("INSERT INTO approvals (id, task_id, cmd, status, created_at) VALUES (?,?,?,?,?)",
+                 ("ap1", "t_dash", "rm -rf /", "pending", db._now()))
+    conn.commit()
+    conn.close()
+
+    c = TestClient(app)
+    r = c.get("/api/health/dashboard")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] in ("ok", "warn", "degraded")
+    assert "failed" in d["tasks"] and d["tasks"]["failed"] >= 1
+    assert d["approvals_pending"] >= 1
+    assert "ws_connections" in d
+    # 有失败任务 + 待审批超阈值可能 warn
+    if d["status"] == "warn":
+        assert any(e["level"] == "warn" for e in d["errors"])

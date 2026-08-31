@@ -77,3 +77,71 @@ def test_run_timeout():
                     side_effect=__import__("subprocess").TimeoutExpired("x", 1)):
         out = run("git status", ".")
         assert "超时" in out
+
+
+import pytest
+from maestro.workers import runcmd
+from maestro import sandbox
+
+
+# ---------- Windows 内建命令：白名单走到 ALLOWED 却被 PATH 找不到 ----------
+# dir / type / echo / whoami / set / path / ver / hostname / tree 都是 cmd.exe 内建命令，
+# shell=False 直接跑会 FileNotFoundError，沙箱白名单失效。
+WINDOWS_BUILTINS = ["dir", "type", "echo", "whoami", "set", "path", "ver", "hostname", "tree"]
+
+
+@pytest.mark.parametrize("cmd", WINDOWS_BUILTINS)
+def test_windows_builtin_in_allowed_executes(tmp_path, monkeypatch, cmd):
+    """白名单内的 Windows 内建命令必须能跑出输出，而不是 FileNotFoundError。
+
+    之前实现：_split_cmd 把 `dir` 拆成 ["dir"] 直接给 subprocess.run，
+    找不到 dir.exe，吞成"命令未找到"——白名单实际失效。
+    """
+    monkeypatch.setattr("maestro.sandbox.request_approval",
+                        lambda cmd, task_id, subtask_id: "approved")
+    if cmd == "type":
+        # type 需要文件参数：造一个临时文件
+        f = tmp_path / "hello.txt"
+        f.write_text("hi\n")
+        out = runcmd.run(f'type hello.txt', str(tmp_path), task_id="t", subtask_id="s")
+    elif cmd == "echo":
+        out = runcmd.run("echo hello-from-builtin", str(tmp_path), task_id="t", subtask_id="s")
+    else:
+        out = runcmd.run(cmd, str(tmp_path), task_id="t", subtask_id="s")
+    assert "命令未找到" not in out, f"{cmd} 在 Windows 上不应报未找到：{out}"
+    if cmd == "echo":
+        assert "hello-from-builtin" in out
+    if cmd == "type":
+        assert "hi" in out
+
+
+def test_runcmd_validate_builtin_allowed(tmp_path):
+    """白名单内的 Windows 内建命令 validate 应通过（不被误判为审批或拒绝）。"""
+    level, reason = runcmd.validate("echo test")
+    assert level == sandbox.ALLOWED, reason
+    for c in ["dir", "type hello.txt", "whoami", "ver", "set"]:
+        level2, reason2 = runcmd.validate(c)
+        assert level2 == sandbox.ALLOWED, f"{c}: {reason2}"
+
+
+@pytest.mark.parametrize("cmd", ["dir", "echo", "whoami", "set", "ver", "hostname", "path"])
+def test_windows_builtin_executes(tmp_path, monkeypatch, cmd):
+    """Windows 内建命令走白名单 ALLOWED 路径必须真能跑（不是 FileNotFoundError）。
+
+    修前：dir/type/echo 等是 cmd.exe 内建命令，shell=False + PATH 找不到
+    dir.exe，吞成"命令未找到"——白名单实际失效。
+    """
+    monkeypatch.setattr("maestro.sandbox.request_approval",
+                        lambda cmd, task_id, subtask_id: "approved")
+    out = runcmd.run(cmd, str(tmp_path), task_id="t", subtask_id="s")
+    assert "命令未找到" not in out, f"{cmd} 误报未找到：{out}"
+
+
+def test_windows_type_executes(tmp_path, monkeypatch):
+    """type 内建命令需文件参数。"""
+    monkeypatch.setattr("maestro.sandbox.request_approval",
+                        lambda cmd, task_id, subtask_id: "approved")
+    f = tmp_path / "hi.txt"
+    f.write_text("hello from type\n")
+    out = runcmd.run("type hi.txt", str(tmp_path), task_id="t", subtask_id="s")
+    assert "hello from type" in out and "命令未找到" not in out

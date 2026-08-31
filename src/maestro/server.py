@@ -1,32 +1,39 @@
-"""Maestro Web 服务（P2 任务窗口）：FastAPI + WebSocket 实时推送。
+"""Maestro Web 服务：FastAPI 组装器（中间件 / 路由注册 / 静态挂载）。
 
-前端内页面在 web/ 目录（仪表盘 / 任务详情 / 壁纸预览）。
-编排器 run_task 是同步阻塞的（场景 B 还含 LLM 汇总），故用后台线程执行，
-WebSocket 每 ~1.2s 轮询 SQLite 把最新状态推给前端。
+路由按域拆分在 maestro/api/ 包（tasks / workflows / meta / chat / conversations / ws），
+共享基础设施（线程池 / 快照 / WS 广播）在 maestro/api/deps.py。
 
-启动：python -m maestro.server   或   maestro serve
+启动：python -m maestro.server   或    maestro serve
 """
-
 from __future__ import annotations
 
-import asyncio
-import json
-import hmac
 import os
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.parse import quote
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import maestro.workers as _wmod  # 触发 worker 注册
 
-from . import chat, config, db, observability, orchestrator, sandbox, split
+from . import config, observability
+from .api import chat as api_chat
+from .api import conversations as api_conversations
+from .api import meta as api_meta
+from .api import tasks as api_tasks
+from .api import workflows as api_workflows
+from .api import ws as api_ws
+from .api.deps import (
+    _active_ws_connections,
+    _ws_lock,
+    _ws_subscriptions,
+    _ws_wants,
+    _compare_keys,
+    capture_main_loop,
+    prune_old_events_startup,
+)
 
 load_dotenv()
 config.apply_worker_bins()  # 把 workers.json 的 bin 路径灌进环境变量（不覆盖已设的）
@@ -35,7 +42,10 @@ observability.setup_logging()  # 结构化日志（受 LOG_LEVEL / LOG_FORMAT �
 log = observability.get_logger(__name__)
 log.info("maestro starting", extra={"version": "0.2", "workers": _wmod.available_workers()})
 
-ROOT = Path(__file__).resolve().parents[2]
+from . import runtime as _runtime_mod
+
+# 项目根 + 静态目录：打包后 ROOT 来自 MAESTRO_HOME 或 exe 同级（runtime 统一解析）
+ROOT = _runtime_mod.project_root()
 WEB_DIR = ROOT / "web"
 WALLPAPER_DIR = ROOT / "wallpaper"
 
@@ -65,7 +75,6 @@ app.add_middleware(
 # 未设时中间件直接放行（本地开发场景，向后兼容）。
 # 白名单（无需鉴权）：/api/healthz, /api/ready, /api/workers/health, /ws/*, 静态资源。
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse
 
 
 class _APIKeyAuthMiddleware(BaseHTTPMiddleware):
@@ -76,10 +85,11 @@ class _APIKeyAuthMiddleware(BaseHTTPMiddleware):
         "/api/ready",           # readiness
         "/api/workers/health",  # worker 健康
         "/",                    # 静态首页
-        "/wallpaper",           # Live2D 壁纸页
+        "/wallpaper",           # 壁纸页
+        "/metrics",             # Prometheus 指标（监控探针；内含计数不含敏感值）
     })
     _WHITELIST_PREFIXES = (
-        "/ws/",                 # WebSocket（前端连 WS 不带 key）
+        "/ws/",                 # WebSocket（前端连 WS 不带 key，WS 自身鉴权）
         "/assets/",             # 静态资源
         "/static/",             # FastAPI mount 静态
     )
@@ -93,8 +103,23 @@ class _APIKeyAuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         api_key = os.environ.get("MAESTRO_API_KEY", "").strip()
 
-        # 没设 key -> 放行（开发模式）
+        # 没设 key -> 放行（开发模式），但浏览器跨源写请求要求 JSON Content-Type：
+        # 恶意网页可用 text/plain 发"简单请求"绕过 CORS preflight 打我们的写端点
+        # （CSRF）；要求 application/json 迫使其 preflight，从而被 CORS 拦截。
+        # 只看 Origin 头（浏览器跨源请求必带）：curl/服务间调用/测试不带 Origin，
+        # 不受影响；自家页面所有 fetch 都声明 application/json，天然通过。
         if not api_key:
+            if (
+                request.headers.get("origin")
+                and request.method in ("POST", "PUT", "DELETE", "PATCH")
+                and path.startswith("/api/")
+            ):
+                ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+                if ctype != "application/json":
+                    return JSONResponse(
+                        {"error": "Content-Type must be application/json"},
+                        status_code=415,
+                    )
             return await call_next(request)
 
         # 白名单直接放行
@@ -120,815 +145,114 @@ class _APIKeyAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-def _compare_keys(provided: str, expected: str) -> bool:
-    """常量时间比较，防时序攻击。"""
-    return hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))
-
-
-# 中间件总是挂载——dispatch 内读 env（每次请求都判断当前 env）。
-# 这样测试不需要 reimport server，monkeypatch.setenv/delenv 即可切换鉴权。
 app.add_middleware(_APIKeyAuthMiddleware)
 
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="maestro-task")
 
-_POLL_INTERVAL = 1.2  # WS 轮询间隔（秒）
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """统一注入安全响应头（XSS / clickjacking / MIME sniffing / referrer 防御）。
 
-
-# ---------- 后台任务执行 ----------
-
-
-def _prepare_job(
-    task_id: str,
-    prompt: str,
-    scenario: str,
-    worker_type: str,
-    parallel: bool,
-    model: str | None,
-    no_merge: bool = False,
-    confirm: bool = True,
-    conv_id: str | None = None,
-    selected_workers: list[str] | None = None,
-):
-    """后台线程：拆分+入库，停在 READY 等用户确认；confirm=False 则立即执行。"""
-    conn = db.init_db()
-    selected_workers = selected_workers or ["embedded"]
-    try:
-        task_id_out = orchestrator.prepare_task(
-            conn,
-            prompt,
-            scenario=scenario,
-            worker_type=worker_type,
-            parallel=parallel,
-            model=model,
-            task_id=task_id,
-            no_merge=no_merge,
-            conv_id=conv_id,
-        )
-        # 多 agent round-robin 分配
-        if len(selected_workers) > 1:
-            subtasks = db.get_subtasks(conn, task_id_out)
-            for i, st in enumerate(subtasks):
-                wt = selected_workers[i % len(selected_workers)]
-                conn.execute("UPDATE subtasks SET worker_type=? WHERE id=?", (wt, st["id"]))
-            conn.commit()
-        if not confirm:
-            # 跳过人工闸门：拆分完立即执行（等价旧行为）
-            orchestrator.execute_task(conn, task_id, model=model)
-    except Exception as e:  # noqa: BLE001 — 拆分/执行失败也要落库可见
-        db.set_task_status(conn, task_id, db.FAILED)
-        db.log_event(conn, task_id, "prepare FAILED", data={"error": str(e)[:500]})
-    finally:
-        conn.close()
-
-
-def _execute_job(task_id: str, timeout: int = 600):
-    """后台线程：确认后执行完整链路。异常落 FAILED，避免任务永远停在 RUNNING
-    （线程池的 future 无人取结果，不落库就静默丢失）。"""
-    conn = db.init_db()
-    try:
-        orchestrator.execute_task(conn, task_id, timeout=timeout)
-    except Exception as e:  # noqa: BLE001 — 与 _prepare_job 对齐：执行失败也要落库可见
-        db.set_task_status(conn, task_id, db.FAILED)
-        db.log_event(conn, task_id, "execute FAILED", data={"error": str(e)[:500]})
-    finally:
-        conn.close()
-
-
-def _retry_job(subtask_id: str, timeout: int = 600):
-    conn = db.init_db()
-    try:
-        orchestrator.retry_subtask(conn, subtask_id, timeout=timeout)
-    finally:
-        conn.close()
-
-
-def _resume_job(task_id: str, timeout: int = 600):
-    conn = db.init_db()
-    try:
-        orchestrator.resume_incomplete(conn, task_id, timeout=timeout)
-    finally:
-        conn.close()
-
-
-# ---------- 快照（DB -> dict）----------
-
-
-def _snapshot(task_id: str) -> dict | None:
-    conn = db.init_db()
-    try:
-        task = db.get_task(conn, task_id)
-        if not task:
-            return None
-        subtasks = db.get_subtasks(conn, task_id)
-        events = db.get_events(conn, task_id)
-        summary_md = None
-        if task.get("result_path") and os.path.exists(task["result_path"]):
-            try:
-                summary_md = Path(task["result_path"]).read_text(encoding="utf-8")
-            except OSError:
-                summary_md = None
-        return {
-            "task": dict(task),
-            "subtasks": [dict(s) for s in subtasks],
-            "events": [dict(e) for e in events],
-            "summary_md": summary_md,
-            "approvals": sandbox.list_pending(task_id),
-        }
-    finally:
-        conn.close()
-
-
-def _task_row(task: dict, n_subtasks: int, n_failed: int, updated_at: str) -> dict:
-    return {
-        "id": task["id"],
-        "user_prompt": (task["user_prompt"] or "")[:120],
-        "status": task["status"],
-        "created_at": task["created_at"],
-        "updated_at": updated_at,
-        "n_subtasks": n_subtasks,
-        "n_failed": n_failed,
-    }
-
-
-# ---------- 健康检查（Kubernetes liveness / readiness 探针用）----------
-
-
-@app.get("/api/healthz", include_in_schema=False)
-def healthz():
-    """轻量 liveness 探针：进程是否在响应（不查依赖）。
-
-    用于 K8s livenessProbe / Docker HEALTHCHECK / 负载均衡器探活。
+    CSP 故意保持宽松（允许 'unsafe-inline' 样式 + 同源 img/connect/frame）——
+    前端是单文件 + 内联 inline style + 使用 fetch/EventSource，前端重构到 ES
+    modules + 外部样式后可逐步收紧。/metrics 文本格式不走 HTML，CSP 不影响。
     """
-    return {"status": "ok"}
+
+    _PATH_PASSTHROUGH = frozenset({"/metrics"})  # 文本响应不受 CSP 影响
+
+    async def dispatch(self, request, call_next):
+        resp = await call_next(request)
+        # nosniff / clickjacking / referrer：直接赋值（BaseHTTPMiddleware 的
+        # MutableHeaders 用 setdefault 在某些路径不生效）
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        # CSP：仅对 HTML 响应注入（静态/JSON/流式跳过，避免污染 text/event-stream）
+        ctype = resp.headers.get("Content-Type", "")
+        if (resp.headers.get("Content-Type", "").startswith("text/html") or
+                (request.url.path == "/" and not resp.headers.get("Content-Type"))):
+            # 内联样式不可避免（pet_q 视差 + 一些 UI 微样式）；script 全部走 app.js
+            resp.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "img-src 'self' data: blob:; "
+                "style-src 'self' 'unsafe-inline'; "
+                "script-src 'self'; "
+                "connect-src 'self' ws: wss:; "
+                "frame-ancestors 'none'; "
+                "base-uri 'self'; "
+                "form-action 'self'"
+            )
+        return resp
 
 
-@app.get("/api/ready")
-def ready():
-    """完整 readiness 探针：检查 SQLite 可用 + LLM provider 配置。
+app.add_middleware(_SecurityHeadersMiddleware)
 
-    Returns:
-        200 + {"status": "ok", "checks": {...}} — 全通过
-        503 + {"status": "degraded", "checks": {...}} — 关键依赖异常
-    """
-    checks: dict = {}
-    db_ok = True
-    try:
-        conn = db.init_db()
+
+# ====== 路由注册（按域） ======
+app.include_router(api_meta.router)
+app.include_router(api_tasks.router)
+app.include_router(api_workflows.router)
+app.include_router(api_chat.router)
+app.include_router(api_conversations.router)
+app.include_router(api_ws.router)
+
+
+async def _backup_loop() -> None:
+    """每 24h 在线备份一次（保留 7 份）。启动后立即跑第一轮。"""
+    import asyncio as _asyncio
+
+    from . import db as _db
+
+    while True:
         try:
-            conn.execute("SELECT 1").fetchone()
-        finally:
-            conn.close()
-    except Exception as e:  # noqa: BLE001
-        checks["db_error"] = str(e)[:200]
-        db_ok = False
-    checks["db"] = "ok" if db_ok else "fail"
+            _db.backup_database(keep=7)
+        except Exception:  # noqa: BLE001 — 备份失败不拖垮服务
+            pass
+        await _asyncio.sleep(24 * 3600)
 
-    # LLM provider 配置检查（不真发请求，只看 key 是否存在）
-    providers = config.load_providers()
-    key_present = bool(os.environ.get("DEEPSEEK_API_KEY")) or bool(providers)
-    checks["llm"] = "ok" if key_present else "no_key"
 
-    # Worker 注册检查
-    workers = _wmod.available_workers()
-    checks["workers"] = {"count": len(workers), "names": workers}
+# ====== lifespan（替代弃用的 on_event；后台任务持引用防 GC） ======
+from contextlib import asynccontextmanager
 
-    all_ok = db_ok and key_present
-    return {
-        "status": "ok" if all_ok else "degraded",
-        "checks": checks,
-        "version": "0.2",
-    }
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # ---- startup ----
+    import asyncio
 
-@app.get("/api/workers/health")
-def workers_health():
-    """所有已注册 worker 的健康检查状态。
+    from .api.deps import capture_main_loop as _capture, prune_old_events_startup as _prune
 
-    每个 worker 检查：
-    - bin 路径存在 + 可执行
-    -（可选）--version 探测 5s 超时
+    await _capture()
+    await _prune()
+    _backup_task = asyncio.get_running_loop().create_task(_backup_loop())
+    app.state.backup_task = _backup_task  # 持引用防 GC
+    # 审批实时推送：注册 sandbox.on_request 钩子（WS 审批卡片依赖）
+    from .api.deps import _approval_push_hook as _approval_hook
+    from . import sandbox as _sandbox
+    _sandbox.on_request(_approval_hook)
+    yield
+    # ---- shutdown ----
+    _backup_task.cancel()
 
-    结果缓存 30s，避免每次 dispatch 都探测。
 
-    返回：
-        200 + {"workers": {name: {"ok": bool, "reason": str}}, "all_ok": bool}
-        503 + {"workers": {...}, "all_ok": false, "degraded": [names]} — 有 worker 不健康
-    """
-    results: dict = {}
-    degraded: list[str] = []
-    for name in _wmod.available_workers():
-        try:
-            worker = _wmod.get_worker(name)
-            # 只对 SubprocessWorker 调用 check_health（embedded/minimax 等非子进程 worker
-            # 内部 Python 模块，无 bin/超时等概念，标 ok=True 即可）
-            from maestro.workers.base import SubprocessWorker
-            if isinstance(worker, SubprocessWorker):
-                ok, reason = worker.check_health()
-            else:
-                ok, reason = True, "in-process worker"
-        except KeyError:
-            ok, reason = False, "worker not registered"
-        except Exception as e:  # noqa: BLE001
-            ok, reason = False, f"check_health raised: {type(e).__name__}"
-        results[name] = {"ok": ok, "reason": reason}
-        if not ok:
-            degraded.append(name)
-
-    all_ok = not degraded
-    payload = {"workers": results, "all_ok": all_ok}
-    if not all_ok:
-        payload["degraded"] = degraded
-    if all_ok:
-        return payload
-    # 至少一个 worker 不健康，返回 503 让监控告警
-    from fastapi.responses import JSONResponse
-    return JSONResponse(content=payload, status_code=503)
-
-
-# ---------- REST API ----------
-
-
-@app.get("/api/tasks")
-def list_tasks(status: str | None = None, limit: int = 200, offset: int = 0):
-    """任务列表：可选按状态过滤 + 分页（默认最近 200 条，与旧行为一致）。"""
-    if limit < 1 or limit > 1000:
-        raise HTTPException(400, "limit 须在 1-1000")
-    if offset < 0:
-        raise HTTPException(400, "offset 不能为负")
-    if status is not None and status not in db.VALID_STATUS:
-        raise HTTPException(400, f"status 非法（允许: {sorted(db.VALID_STATUS)}）")
-
-    conn = db.init_db()
-    try:
-        # LEFT JOIN 保证没子任务的 task 也在结果里（COUNT 为 0）。
-        base = (
-            "SELECT t.id, t.user_prompt, t.status, t.created_at, t.updated_at, "
-            "       COUNT(s.id) AS n_subtasks, "
-            "       SUM(CASE WHEN s.status='failed' THEN 1 ELSE 0 END) AS n_failed "
-            "FROM tasks t LEFT JOIN subtasks s ON s.task_id = t.id"
-        )
-        params: list = []
-        if status:
-            base += " WHERE t.status=?"
-            params.append(status)
-        base += " GROUP BY t.id ORDER BY t.created_at DESC LIMIT ? OFFSET ?"
-        params += [limit, offset]
-        rows = conn.execute(base, params).fetchall()
-        out = []
-        for r in rows:
-            r = dict(r)
-            n = int(r.pop("n_subtasks") or 0)
-            nf = int(r.pop("n_failed") or 0)
-            out.append(_task_row(r, n, nf, r["updated_at"]))
-        return out
-    finally:
-        conn.close()
-
-
-# Agent/Worker 列表（前端多选 agent 面板用）
-_WORKER_META = {
-    "embedded": {"label": "内置编排器", "desc": "本地 LLM，内置文件工具，适合轻量任务"},
-    "opencode": {"label": "OpenCode", "desc": "深度编码 agent，适合代码生成/重构"},
-    "octo": {"label": "Octo", "desc": "Headless 编码 agent，走 DeepSeek"},
-    "workbuddy": {"label": "WorkBuddy", "desc": "全能工具型 agent，适合复杂工作流"},
-    "minimax": {"label": "MiniMax", "desc": "图片/视频/语音生成，适合创意任务"},
-    "codebuddy": {"label": "CodeBuddy", "desc": "腾讯云编码 agent（需实名认证）"},
-}
-
-
-@app.get("/api/agents")
-def list_agents():
-    """返回所有已注册的 agent（含名称/描述/是否可用）。"""
-    from . import workers as _wmod
-
-    available = _wmod.available_workers()
-    return [
-        {
-            "name": name,
-            "label": _WORKER_META.get(name, {}).get("label", name),
-            "desc": _WORKER_META.get(name, {}).get("desc", ""),
-            "available": name in available,
-        }
-        for name in _WORKER_META
-    ]
-
-
-@app.get("/api/keys")
-def list_keys():
-    """Key 库列表（不含实际 key 值，只返回元数据）。"""
-    from . import config as _cfg
-
-    keys_data = _cfg.load_keys()
-    out = []
-    for k in keys_data.get("keys") or []:
-        env_var = k.get("env_var", "")
-        configured = bool(env_var and os.environ.get(env_var))
-        out.append(
-            {
-                "id": k.get("id"),
-                "label": k.get("label", env_var),
-                "provider": k.get("provider", ""),
-                "models": k.get("models", []),
-                "configured": configured,
-            }
-        )
-    return out
-
-
-@app.get("/api/models")
-def list_models():
-    """返回所有已配置的模型（环境变量存在才返回）。"""
-    from . import config as _cfg
-
-    return _cfg.get_available_models()
-
-
-@app.post("/api/tasks")
-async def create_task(payload: dict):
-    prompt = (payload.get("prompt") or "").strip()
-    scenario = payload.get("scenario", "a")
-    worker_type = payload.get("worker_type", "embedded")
-    parallel = bool(payload.get("parallel", scenario != "a"))
-    no_merge = bool(payload.get("no_merge", False))
-    model = payload.get("model") or None
-    # key 不在这里注入 env：llm.get_client 每次按 provider 从 providers.json
-    # 的 api_key_env 现查，并发任务互不影响（进程级 env 会让不同模型任务互相覆盖 key）。
-    # confirm=False 时跳过人工闸门，拆分后立即执行（等价旧行为）
-    confirm = bool(payload.get("confirm", True))
-    # 任务关联会话：完成后结果写入该会话（对话隔离/任务对话可见结果）
-    conv_id = payload.get("conv_id") or None
-    # 多 agent 选择（支持同时派给多个 agent）
-    selected_workers: list[str] = payload.get("selected_workers") or []
-    # 至少选一个；不合法/不可用的 agent 过滤掉
-    valid_workers = _wmod.available_workers()
-    selected_workers = [w for w in selected_workers if w in valid_workers]
-    # 如果没传或全不合法，退回 embedded
-    if not selected_workers:
-        selected_workers = ["embedded"]
-
-    if not prompt:
-        raise HTTPException(400, "prompt 不能为空")
-    if scenario not in ("a", "b", "c", "auto"):
-        raise HTTPException(400, "scenario 必须是 a / b / c / auto")
-    # 用第一个 agent 拆分任务，后续 round-robin 分配
-    if worker_type not in valid_workers:
-        worker_type = selected_workers[0]
-
-    detect_reason = None
-    if scenario == "auto":
-        # 决策：LLM 识别输入类型 → 路由到 a/b/c
-        try:
-            scenario, detect_reason = split.detect_scenario(prompt, model=model)
-        except Exception as e:  # noqa: BLE001 — 识别失败退回场景 A，不让任务失败
-            scenario, detect_reason = "a", f"auto 识别失败回退 a: {type(e).__name__}"
-
-    # 预先生成 task_id 立即返回；拆分交给后台线程
-    task_id = f"task_{os.urandom(4).hex()}"
-    _executor.submit(
-        _prepare_job,
-        task_id,
-        prompt,
-        scenario,
-        worker_type,
-        parallel,
-        model,
-        no_merge,
-        confirm,
-        conv_id,
-        selected_workers,
-    )
-    return {
-        "task_id": task_id,
-        "confirm": confirm,
-        "scenario": scenario,
-        "detect_reason": detect_reason,
-        "selected_workers": selected_workers,
-        "model": model,
-    }
-
-
-@app.put("/api/tasks/{task_id}/subtasks")
-def update_subtasks(task_id: str, payload: dict):
-    """人工闸门编辑：整体替换子任务列表（增删改 / 调序）。仅 ready 态允许。"""
-    items = payload.get("subtasks")
-    if not isinstance(items, list) or not items:
-        raise HTTPException(400, "subtasks 必须是非空数组")
-    conn = db.init_db()
-    try:
-        task = db.get_task(conn, task_id)
-        if not task:
-            raise HTTPException(404, "任务不存在")
-        if task["status"] != db.READY:
-            raise HTTPException(409, f"任务状态 {task['status']} 不可编辑（仅 ready 待确认状态可编辑）")
-        allowed = _wmod.available_workers()
-        cleaned = []
-        for i, it in enumerate(items):
-            desc = (it.get("desc") or "").strip()
-            if not desc:
-                raise HTTPException(400, f"子任务 #{i + 1} 缺 desc")
-            wt = it.get("worker_type") or "embedded"
-            if wt not in allowed:
-                raise HTTPException(400, f"子任务 #{i + 1} worker_type 非法: {wt}")
-            cleaned.append({"id": it.get("id"), "desc": desc, "worker_type": wt})
-        subs = db.replace_subtasks(conn, task_id, cleaned)
-        db.log_event(conn, task_id, f"subtasks edited -> {len(subs)}", data=[s["id"] for s in subs])
-        return {"ok": True, "n_subtasks": len(subs)}
-    finally:
-        conn.close()
-
-
-@app.post("/api/tasks/{task_id}/execute")
-def execute_task(task_id: str):
-    """确认执行：ready 态任务按（已编辑）子任务列表开始派发。"""
-    conn = db.init_db()
-    try:
-        task = db.get_task(conn, task_id)
-        if not task:
-            raise HTTPException(404, "任务不存在")
-        if task["status"] != db.READY:
-            raise HTTPException(409, f"任务状态 {task['status']} 不可执行（仅 ready 待确认状态可执行）")
-    finally:
-        conn.close()
-    _executor.submit(_execute_job, task_id)
-    return {"ok": True, "task_id": task_id}
-
-
-@app.delete("/api/tasks/{task_id}")
-def delete_task(task_id: str):
-    """删除任务（级联删子任务/事件）。running 中任务先取消再删。"""
-    conn = db.init_db()
-    try:
-        task = db.get_task(conn, task_id)
-        if not task:
-            raise HTTPException(404, "任务不存在")
-        if task["status"] == db.RUNNING:
-            raise HTTPException(409, "任务执行中，请先取消再删除")
-        if not db.delete_task(conn, task_id):
-            raise HTTPException(404, "任务不存在")
-        return {"ok": True, "task_id": task_id}
-    finally:
-        conn.close()
-
-
-@app.post("/api/tasks/{task_id}/cancel")
-def cancel_task(task_id: str):
-    """取消任务（ready 未执行 / running 执行中 / pending 均可）。终态不可取消。"""
-    conn = db.init_db()
-    try:
-        if not db.cancel_task(conn, task_id):
-            task = db.get_task(conn, task_id)
-            if not task:
-                raise HTTPException(404, "任务不存在")
-            raise HTTPException(409, f"任务状态 {task['status']} 不可取消（仅未完成状态可取消）")
-        return {"ok": True, "task_id": task_id}
-    finally:
-        conn.close()
-
-
-@app.post("/api/tasks/{task_id}/resume")
-def resume_task(task_id: str):
-    """重启恢复入口：把中断（running 态）任务的未完成子任务续跑完。"""
-    conn = db.init_db()
-    try:
-        task = db.get_task(conn, task_id)
-        if not task:
-            raise HTTPException(404, "任务不存在")
-        if task["status"] != db.RUNNING:
-            raise HTTPException(409, f"任务状态 {task['status']} 不可恢复（仅 running 中断态可恢复）")
-    finally:
-        conn.close()
-    _executor.submit(_resume_job, task_id)
-    return {"ok": True, "task_id": task_id}
-
-
-@app.get("/api/tasks/{task_id}")
-def get_task(task_id: str):
-    snap = _snapshot(task_id)
-    if not snap:
-        raise HTTPException(404, "任务不存在")
-    return snap
-
-
-@app.post("/api/tasks/{task_id}/retry/{subtask_id}")
-def retry_subtask(task_id: str, subtask_id: str):
-    conn = db.init_db()
-    try:
-        st = db.get_subtask(conn, subtask_id)
-    finally:
-        conn.close()
-    if not st or st["task_id"] != task_id:
-        raise HTTPException(404, "子任务不存在")
-    _executor.submit(_retry_job, subtask_id)
-    return {"ok": True, "subtask_id": subtask_id}
-
-
-# ---------- 沙箱审批 ----------
-
-
-@app.post("/api/tasks/{task_id}/approvals/{approval_id}")
-def approval_decision(task_id: str, approval_id: str, payload: dict):
-    """审批命令：POST {"action": "approve" | "reject"}。
-    对应 WorkBuddy 沙箱的"越权需用户批准"——agent 请求执行修改类命令，
-    用户在这里点头放行或否决。批准后命令立即在等待线程中执行。
-    """
-    action = payload.get("action")
-    if action not in ("approve", "reject"):
-        raise HTTPException(400, "action 必须是 approve / reject")
-
-    # 归属校验：审批请求必须属于该任务（防跨任务操作）
-    found = False
-    for ap in sandbox.list_pending(task_id):
-        if ap["id"] == approval_id:
-            found = True
-            break
-    if not found:
-        raise HTTPException(404, f"审批请求不存在或不属于该任务: {approval_id}")
-
-    ok = sandbox.decide(approval_id, approve=(action == "approve"))
-    if not ok:
-        raise HTTPException(409, f"审批请求已过期或已被处理: {approval_id}")
-    return {"ok": True, "approval_id": approval_id, "decision": "approved" if action == "approve" else "rejected"}
-
-
-# ---------- 数字人闲聊 ----------
-
-
-@app.get("/api/conversations")
-def conversation_list(kind: str | None = None):
-    """会话列表（最近活跃倒序，带消息数/最后预览）；?kind=chat|task 只取某类。"""
-    conn = db.init_db()
-    try:
-        return {"conversations": db.list_conversations(conn, kind=kind)}
-    finally:
-        conn.close()
-
-
-@app.post("/api/conversations")
-def conversation_create(payload: dict | None = None):
-    """创建新会话：POST {"title": "...", "kind": "chat|task"} → {"conv_id", "title", "kind"}。"""
-    payload = payload or {}
-    title = payload.get("title") or ""
-    kind = payload.get("kind") or "chat"
-    if kind not in ("chat", "task"):
-        raise HTTPException(400, "kind 必须是 chat / task")
-    conn = db.init_db()
-    try:
-        conv_id = db.create_conversation(conn, title, kind=kind)
-        return {"conv_id": conv_id, "title": (title or "").strip() or "新对话", "kind": kind}
-    finally:
-        conn.close()
-
-
-@app.put("/api/conversations/{conv_id}")
-def conversation_rename(conv_id: str, payload: dict):
-    """重命名会话：PUT {"title": "..."}。"""
-    title = (payload.get("title") or "").strip()
-    if not title:
-        raise HTTPException(400, "title 不能为空")
-    conn = db.init_db()
-    try:
-        if not db.rename_conversation(conn, conv_id, title):
-            raise HTTPException(404, "会话不存在")
-        return {"ok": True, "title": title}
-    finally:
-        conn.close()
-
-
-@app.delete("/api/conversations/{conv_id}")
-def conversation_delete(conv_id: str):
-    """删除会话（级联删消息）。"""
-    conn = db.init_db()
-    try:
-        if not db.delete_conversation(conn, conv_id):
-            raise HTTPException(404, "会话不存在")
-        return {"ok": True}
-    finally:
-        conn.close()
-
-
-@app.get("/api/conversations/{conv_id}/export")
-def conversation_export(conv_id: str):
-    """导出会话为 Markdown 文本（下载文件）。"""
-    conn = db.init_db()
-    try:
-        conv = db.get_conversation(conn, conv_id)
-        if not conv:
-            raise HTTPException(404, "会话不存在")
-        msgs = db.get_chat_history(conn, limit=10000, conv_id=conv_id)
-        lines = [f"# 对话：{conv['title']}", ""]
-        for m in msgs:
-            who = "👤 用户" if m["role"] == "user" else "🌿 芙莉莲"
-            ts = (m["created_at"] or "")[:16].replace("T", " ")
-            lines.append(f"### {who}（{ts}）")
-            lines.append(m["content"])
-            lines.append("")
-        text = "\n".join(lines).strip() + "\n"
-        filename = f"对话_{conv['title'][:16]}.md"
-        return Response(
-            text,
-            media_type="text/markdown; charset=utf-8",
-            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
-        )
-    finally:
-        conn.close()
-
-
-@app.post("/api/chat")
-def chat_message(payload: dict):
-    """数字人闲聊：POST {"message": "...", "conv_id": "..."} → {"reply": "..."}。"""
-    message = (payload.get("message") or "").strip()
-    if not message:
-        raise HTTPException(400, "message 不能为空")
-    conv_id = payload.get("conv_id") or db.DEFAULT_CONV_ID
-    conn = db.init_db()
-    try:
-        if not db.get_conversation(conn, conv_id):
-            raise HTTPException(404, "会话不存在")
-        reply = chat.chat(conn, message, conv_id=conv_id)
-        return {"reply": reply, "conv_id": conv_id}
-    except HTTPException:
-        raise
-    except Exception as e:  # noqa: BLE001 — LLM 失败不拖垮服务
-        raise HTTPException(500, f"闲聊失败：{e}") from e
-    finally:
-        conn.close()
-
-
-@app.post("/api/chat/stream")
-def chat_message_stream(payload: dict, background: BackgroundTasks):
-    """数字人闲聊（流式/打字机）：POST {"message", "conv_id"} → SSE。
-
-    事件：data: {"delta": "文本增量"} … data: {"done": true, "reply": "..."}
-          / data: {"error": "..."}
-
-    流结束后用 FastAPI BackgroundTasks 异步广播到 WebSocket，
-    避免在同步生成器内调 asyncio.get_event_loop()（uvicorn 已在 loop 中，
-    会 RuntimeError）。
-    """
-    message = (payload.get("message") or "").strip()
-    if not message:
-        raise HTTPException(400, "message 不能为空")
-    conv_id = payload.get("conv_id") or db.DEFAULT_CONV_ID
-    conn = db.init_db()
-    try:
-        if not db.get_conversation(conn, conv_id):
-            raise HTTPException(404, "会话不存在")
-    finally:
-        conn.close()
-
-    full_reply: list[str | None] = [None]
-
-    def gen():
-        conn2 = db.init_db()
-        try:
-            for kind, data in chat.chat_stream(conn2, message, conv_id=conv_id):
-                if kind == "delta":
-                    yield f"data: {json.dumps({'delta': data}, ensure_ascii=False)}\n\n"
-                elif kind == "error":
-                    yield f"data: {json.dumps({'error': data}, ensure_ascii=False)}\n\n"
-                    return
-                elif kind == "done":
-                    full_reply[0] = data
-                    yield f"data: {json.dumps({'done': True, 'reply': data}, ensure_ascii=False)}\n\n"
-        finally:
-            conn2.close()
-
-    # 流结束后广播到 WS：注册到 BackgroundTasks，由 uvicorn 的 event loop
-    # 负责调度（绝对不要在同步生成器内 get_event_loop）。
-    reply_at_end = full_reply  # 闭包捕获
-    conv_at_end = conv_id
-
-    async def _broadcast_after_stream():
-        reply = reply_at_end[0]
-        if reply:
-            try:
-                await broadcast_to_ws(conv_at_end, "assistant", reply)
-            except Exception:  # noqa: BLE001 — WS 失败不阻塞其他流程
-                pass
-
-    background.add_task(_broadcast_after_stream)
-    return StreamingResponse(gen(), media_type="text/event-stream")
-
-
-@app.get("/api/chat/history")
-def chat_history(limit: int = 20, conv_id: str | None = None):
-    """取某会话最近闲聊记录（时间正序）；conv_id 缺省返回全部。"""
-    conn = db.init_db()
-    try:
-        return {"messages": db.get_chat_history(conn, limit=limit, conv_id=conv_id)}
-    finally:
-        conn.close()
-
-
-@app.get("/api/chat/profile")
-def chat_profile():
-    """查看数字人记住的用户档案（长期记忆）。"""
-    conn = db.init_db()
-    try:
-        return {"profile": db.get_user_profile(conn)}
-    finally:
-        conn.close()
-
-
-@app.delete("/api/chat/profile")
-def chat_profile_clear():
-    """清空数字人的用户档案（长期记忆）。"""
-    conn = db.init_db()
-    try:
-        db.clear_user_profile(conn)
-        return {"ok": True}
-    finally:
-        conn.close()
-
-
-@app.delete("/api/chat/history")
-def chat_clear():
-    """清空闲聊记录。"""
-    conn = db.init_db()
-    try:
-        db.clear_chat_history(conn)
-        return {"ok": True}
-    finally:
-        conn.close()
-
-
-# ---------- WebSocket 实时推送 ----------
-
-# 活跃的 WebSocket 连接（用于消息推送）
-# asyncio.Lock 保护并发 append/remove/broadcast：同一 loop 内协程并发时
-# 仍有 list iteration 修改的潜在风险（RuntimeError: list changed during iteration）。
-_active_ws_connections: list[WebSocket] = []
-_ws_lock = threading.Lock()
-_WS_MAX = 100  # 单机最大连接数（防资源耗尽）
-
-
-@app.websocket("/ws")
-async def ws_messages(websocket: WebSocket):
-    """通用 WebSocket 端点：推送聊天消息和任务结果到前端。根据 conv_id 路由消息到对应窗口。"""
-    await websocket.accept()
-    with _ws_lock:
-        if len(_active_ws_connections) >= _WS_MAX:
-            await websocket.close(code=1013, reason="too many connections")
-            return
-        _active_ws_connections.append(websocket)
-    try:
-        while True:
-            await websocket.receive_text()
-            # 客户端可以发送 {"action": "subscribe", "conv_id": "xxx"} 来订阅特定会话
-            # 目前不需要客户端消息，只接收即可
-    except WebSocketDisconnect:
-        pass
-    finally:
-        with _ws_lock:
-            if websocket in _active_ws_connections:
-                _active_ws_connections.remove(websocket)
-
-
-async def broadcast_to_ws(conv_id: str, role: str, content: str):
-    """向所有 WebSocket 连接广播消息（前端会根据 conv_id 路由）。"""
-    # 拷贝副本（在锁内），避免迭代期间其他协程修改列表。
-    with _ws_lock:
-        if not _active_ws_connections:
-            return
-        targets = list(_active_ws_connections)
-    msg = {"conv_id": conv_id, "role": role, "content": content}
-    dead: list[WebSocket] = []
-    for ws in targets:
-        try:
-            await ws.send_json(msg)
-        except Exception:
-            dead.append(ws)
-    if dead:
-        with _ws_lock:
-            for ws in dead:
-                if ws in _active_ws_connections:
-                    _active_ws_connections.remove(ws)
-
-
-@app.websocket("/ws/task/{task_id}")
-async def ws_task(websocket: WebSocket, task_id: str):
-    await websocket.accept()
-    try:
-        while True:
-            snap = _snapshot(task_id)
-            if snap is None:
-                await websocket.send_json({"error": "task_not_found"})
-                break
-            await websocket.send_json(snap)
-            status = snap["task"]["status"]
-            if status in (db.DONE, db.FAILED):
-                # 终态再推一次后保持连接短暂存活，前端自行关闭
-                await asyncio.sleep(_POLL_INTERVAL)
-                await websocket.send_json(_snapshot(task_id))
-                break
-            await asyncio.sleep(_POLL_INTERVAL)
-    except WebSocketDisconnect:
-        return
-    except Exception:  # noqa: BLE001 — WS 异常不拖垮服务
-        return
+app.router.lifespan_context = _lifespan
 
 
 # ---------- 壁纸预览 ----------
+
+
+@app.get("/metrics")
+def metrics(format: str = "prometheus"):
+    """Prometheus 指标（?format=json 可切 JSON）。监控探针用，免鉴权。"""
+    from . import metrics as metrics_mod
+
+    m = metrics_mod.collect_metrics()
+    if format == "json":
+        return m
+    from fastapi.responses import PlainTextResponse
+
+    return PlainTextResponse(
+        metrics_mod.format_prometheus(m),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @app.get("/wallpaper")
@@ -949,10 +273,33 @@ if WALLPAPER_DIR.exists():
 # ---------- 静态前端（最后挂载，避免拦截 /api 与 /ws）----------
 
 if WEB_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
+    # 开发/自托管场景禁用前端缓存：更新 app.js/style.css 后普通刷新即生效
+    # （生产 CDN 场景可再包一层带版本号的缓存策略）
+    class _NoCacheStatic(StaticFiles):
+        def file_response(self, *args, **kwargs):
+            resp = super().file_response(*args, **kwargs)
+            resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+            return resp
+
+    app.mount("/", _NoCacheStatic(directory=str(WEB_DIR), html=True), name="web")
+
+
+# ====== 兼容导出（既有测试/调用方依赖这些名字） ======
+# 路由函数
+create_task = api_tasks.create_task
+# 工作流助手
+apply_workflow_defaults = api_tasks.apply_workflow_defaults
+_workflow_to_subtasks = api_tasks._workflow_to_subtasks
+# WS 基础设施（测试直接引用模块级状态）
+_ws_authenticated = api_ws._ws_authenticated
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("maestro.server:app", host="127.0.0.1", port=8787, reload=False)
+    uvicorn.run(
+        "maestro.server:app",
+        host=os.environ.get("MAESTRO_HOST", "127.0.0.1"),
+        port=int(os.environ.get("MAESTRO_PORT", "8787")),
+        reload=False,
+    )

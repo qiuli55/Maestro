@@ -17,8 +17,9 @@ from .base import SubprocessWorker, register
 # 环境层面的兜底（用户已手动把 node 加进 User PATH，但 Maestro 若以不继承该 PATH
 # 的方式启动，仍要靠这里兜底）。
 _NODE_CANDIDATES = [
-    r"C:\Users\A\.workbuddy\binaries\node\versions\22.22.2",
-    r"C:\Users\A\.workbuddy\binaries\node\versions\22.12.0",
+    os.environ.get("CODEBUDDY_NODE_DIR", ""),
+    r"C:\Program Files\nodejs",
+    r"C:\Program Files (x86)\nodejs",
 ]
 
 
