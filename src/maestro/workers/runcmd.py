@@ -36,6 +36,17 @@ _ALLOWED_COMMANDS = {
     "set",
 }
 
+# cmd.exe 内建命令（Windows 上没有同名 exe，必须经 cmd /c 间接调用）；
+# shell=False 模式下 subprocess.run(["cmd.exe","/c",...]) 走 CreateProcessW
+# argv 直接传递，shell 解析完全跳过，安全等同。非 Windows 平台无此概念。
+if sys.platform == "win32":
+    _CMD_BUILTINS = {
+        "dir", "type", "echo", "whoami", "ver", "hostname",
+        "path", "set", "tree", "findstr",
+    }
+else:
+    _CMD_BUILTINS = set()
+
 # cmd.exe 内建命令的子集：Windows 上 shell=False + 列表式 argv 直接跑会
 # FileNotFoundError（没有 dir.exe / type.exe 等独立可执行）。git / where /
 # findstr / tasklist / systeminfo 是真实 exe 不在内建集，需要 PATH 探测。
@@ -264,6 +275,13 @@ def run(cmd: str, workdir: str, task_id: str | None = None, subtask_id: str | No
     argv = _split_cmd(cmd)
     if not argv:
         return "[run_command 失败] 无法解析命令参数。"
+
+    # Windows 内建命令（dir / type / echo / ...）在 PATH 下无同名 exe——
+    # 必须经 cmd.exe /c 间接调用。shell=False 模式下 ["cmd.exe","/c",...argv]
+    # 直接走 CreateProcessW argv，shell 解析完全跳过，安全等同。
+    name = _command_name(cmd)
+    if sys.platform == "win32" and name in _CMD_BUILTINS and argv[0].lower() not in ("cmd", "cmd.exe"):
+        argv = ["cmd.exe", "/c", *argv]
 
     # Windows 内建命令（dir / type / echo / ...）在 PATH 下没有同名 exe，必须经
     # cmd.exe /c 间接调用——shell=False 模式下 ["cmd.exe", "/c", "dir"] 是
