@@ -465,9 +465,33 @@
           winMinimize(s.id);
         }
       });
+      backfillAllHistories(); // 历史回灌：恢复的窗口拉取各自会话的历史消息
     }catch(e){
       console.error("恢复窗口失败:",e);
     }
+  }
+
+  // 历史回灌：为所有已恢复的会话窗口拉取最近消息（刷新后窗口不再空白）。
+  // 消息容器可能住在独立窗口或合并窗口 tab，msgsEl 按 convId 寻址天然兼容。
+  function backfillAllHistories(){
+    Object.keys(convMeta).forEach(function(cid){
+      var body=msgsEl(cid);
+      if(!body||body.childElementCount>0)return; // 已有内容（异常场景）不重复灌
+      fetch(MAESTRO+"/api/chat/history?limit=30&conv_id="+encodeURIComponent(cid),{cache:"no-store"})
+        .then(function(r){return r.ok?r.json():null})
+        .then(function(d){
+          var msgs=d&&d.messages;
+          if(!msgs||!msgs.length)return;
+          var b=msgsEl(cid);
+          if(!b||b.childElementCount>0)return; // 拉取期间用户已发消息：放弃回灌
+          msgs.forEach(function(m){
+            if(m.role!=="user"&&m.role!=="assistant")return;
+            winAppendMsg(cid,m.role,m.content);
+          });
+          b.dataset.backfilled="1";
+        })
+        .catch(function(){ /* 服务未起：静默，用户仍可发新消息 */ });
+    });
   }
 
   // 页面加载完成后恢复窗口
@@ -741,6 +765,117 @@
     }
   }
 
+  // ========== WebSocket 事件通道 ==========
+  // 后端 /ws 推送 {kind: chat|task|approval, conv_id, role, content}。
+  // - task/approval 事件驱动刷新任务卡片（轮询降级为兜底）
+  // - chat 消息仍走 winAppendMsg（带去重），WS 到达的聊天全文用于
+  //   本地流式失败时的兜底（dataset.text 比对在 winAppendMsg 内完成）
+  var evtWs=null,evtWsTimer=null;
+  function connectEvtWs(){
+    try{ evtWs=new WebSocket(MAESTRO.replace("http","ws")+"/ws"); }catch(e){ scheduleEvtWsReconnect(); return; }
+    evtWs.onopen=function(){ /* 已连接：静默 */ };
+    evtWs.onmessage=function(ev){
+      var msg; try{ msg=JSON.parse(ev.data); }catch(e){ return; }
+      var kind=msg.kind||"chat";
+      var convId=msg.conv_id||"";
+      if(kind==="approval"){
+        showApprovalCard(msg);
+        return;
+      }
+      if(kind==="task"&&convId){
+        // 任务状态变化：拉一次快照刷新对应卡片（比解析 content 稳）
+        fetch(MAESTRO+"/api/tasks/"+encodeURIComponent(msg.taskId||""),{cache:"no-store"})
+          .then(function(r){return r.ok?r.json():null})
+          .then(function(snap){ if(snap&&snap.task)renderTaskCard(convId,snap); })
+          .catch(function(){});
+        return;
+      }
+      if(kind==="chat"&&convId&&wins[convId]){
+        winAppendMsg(convId,msg.role||"assistant",msg.content||"");
+      }
+    };
+    evtWs.onclose=function(){ scheduleEvtWsReconnect(); };
+    evtWs.onerror=function(){ try{evtWs.close();}catch(e){} };
+  }
+  function scheduleEvtWsReconnect(){
+    if(evtWsTimer)return;
+    evtWsTimer=setTimeout(function(){evtWsTimer=null;connectEvtWs();},3000);
+  }
+  setTimeout(connectEvtWs,800); // 页面加载后接入
+  // e2e/测试调试口：喂一条伪造的 WS 消息走真实分发逻辑（不暴露写状态）
+  window.__evtWsFeed=function(msgObj){
+    if(evtWs&&evtWs.onmessage)evtWs.onmessage({data:JSON.stringify(msgObj)});
+  };
+
+  // ========== 审批卡片（沙箱越权命令批准/拒绝） ==========
+  var TC_APPROVALS = {}; // approval_id -> {convId}
+  function showApprovalCard(msg){
+    var payload;
+    try{ payload=typeof msg.content==="string"?JSON.parse(msg.content):msg.content; }
+    catch(e){ return; }
+    var approvalId=payload.approval_id||"";
+    var taskId=payload.task_id||"";
+    var cmd=payload.cmd||"";
+    if(!approvalId||TC_APPROVALS[approvalId])return;
+    // 找到该任务的会话窗口；找不到就挂到 dock 选中的窗口
+    var convId=(taskId&&taskConvOf(taskId))||(selectedWinId&&convMeta[selectedWinId]?selectedWinId:null);
+    if(!convId||!winOfConv(convId))return;
+    TC_APPROVALS[approvalId]={convId:convId};
+    var body=msgsEl(convId);
+    if(!body)return;
+    var now=maybeAppendDivider(body);
+    var card=document.createElement("div");
+    card.className="task-card approval-card";
+    card.dataset.approval=approvalId;
+    card.innerHTML=
+      '<div class="tc-head"><span class="tc-status running">待审批</span>'+
+        '<span class="tc-prompt">沙箱请求执行命令</span></div>'+
+      '<div class="tc-meta"><code class="md-inline">'+escapeHtml(cmd.slice(0,120))+'</code></div>'+
+      '<div class="tc-approve-row">'+
+        '<button type="button" class="ap-approve">批准执行</button>'+
+        '<button type="button" class="ap-reject">拒绝</button>'+
+      '</div>';
+    var ops=document.createElement("div");
+    ops.className="msg-ops";
+    ops.innerHTML='<button type="button" data-op="copytask" title="复制命令">复制命令</button>';
+    card.appendChild(ops);
+    // 复制命令复用 data.raw
+    card.querySelector('[data-op="copytask"]').addEventListener("click",function(){
+      if(navigator.clipboard)navigator.clipboard.writeText(cmd).catch(function(){});
+    });
+    function decide(action){
+      fetch(MAESTRO+"/api/tasks/"+encodeURIComponent(taskId)+"/approvals/"+encodeURIComponent(approvalId),
+        {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:action})})
+        .then(function(r){return r.json()})
+        .then(function(d){
+          var chip=card.querySelector(".tc-status");
+          if(d&&d.ok){
+            chip.textContent=action==="approve"?"已批准":"已拒绝";
+            chip.className="tc-status "+(action==="approve"?"done":"failed");
+          }else{
+            chip.textContent="已过期";
+            chip.className="tc-status pending";
+          }
+          card.querySelector(".tc-approve-row").style.display="none";
+        })
+        .catch(function(){
+          card.querySelector(".tc-status").textContent="网络错误";
+        });
+    }
+    card.querySelector(".ap-approve").addEventListener("click",function(){decide("approve");});
+    card.querySelector(".ap-reject").addEventListener("click",function(){decide("reject");});
+    body.appendChild(card);
+    body.scrollTop=body.scrollHeight;
+    body._lastMsg={t:now,role:"assistant"};
+  }
+  // taskId -> convId 反查（遍历 convHost 的宿主窗口子卡片）
+  function taskConvOf(taskId){
+    var card=document.querySelector('.task-card[data-task="'+taskId+'"]');
+    if(!card)return null;
+    var cont=card.closest(".win-msgs");
+    return cont?cont.dataset.conv:null;
+  }
+
   // ========== 任务进度卡片 ==========
   var TC_STATUS={pending:"待拆分",ready:"待确认",running:"运行中",done:"已完成",
                  failed:"已失败",retry:"重试中",cancelled:"已取消"};
@@ -793,15 +928,14 @@
     pollTaskCard(id,taskId);
   }
 
-  function pollTaskCard(convId,taskId){
-    fetch(MAESTRO+"/api/tasks/"+taskId,{cache:"no-store"})
-      .then(function(r){return r.json()})
-      .then(function(snap){
-        if(!snap||!snap.task)return;
-        if(!winOfConv(convId))return; // 会话窗口已关闭：停止轮询
-        var card=document.querySelector('.task-card[data-task="'+taskId+'"]');
-        if(!card)return;
-        var t=snap.task;
+  // 快照 → 卡片 DOM（WS 推送与轮询共用）
+  var TC_FINAL = {done:1, failed:1, cancelled:1};
+  function renderTaskCard(convId, snap){
+    var taskId = snap.task.id;
+    if(!winOfConv(convId))return false; // 会话窗口已关闭
+    var card=document.querySelector('.task-card[data-task="'+taskId+'"]');
+    if(!card)return false;
+    var t=snap.task;
         var chip=card.querySelector(".tc-status");
         chip.textContent=TC_STATUS[t.status]||t.status;
         chip.className="tc-status "+t.status;
@@ -822,29 +956,38 @@
           tg.style.display="";
           tg.textContent="子任务 "+doneN+"/"+subs.length;
         }
-        if(t.status==="done"||t.status==="failed"){
-          // 终态：展示结果（Markdown），过长的结果折叠
-          var resEl=card.querySelector(".tc-result");
-          var txt=(t.result||"").trim();
-          if(!txt&&t.status==="failed")txt="任务失败："+(t.error||"未知错误");
-          if(txt){
-            resEl.classList.add("show");
-            resEl.dataset.raw=txt;
-            resEl.innerHTML=mdRender(txt);
-            if(txt.length>MD_FOLD_LEN){
-              resEl.classList.add("clamped");
-              var rb=document.createElement("button");
-              rb.type="button";rb.className="tc-result-toggle";rb.textContent="展开全文";
-              rb.addEventListener("click",function(){
-                resEl.classList.toggle("clamped");
-                rb.textContent=resEl.classList.contains("clamped")?"展开全文":"收起";
-              });
-              card.appendChild(rb);
-            }
-          }
-          poll(); // 刷新顶部编排器面板
-          return; // 终态：停止轮询
+    if(TC_FINAL[t.status]){
+      // 终态：展示结果（Markdown），过长的结果折叠
+      var resEl=card.querySelector(".tc-result");
+      var txt=(t.result||"").trim();
+      if(!txt&&t.status==="failed")txt="任务失败："+(t.error||"未知错误");
+      if(txt){
+        resEl.classList.add("show");
+        resEl.dataset.raw=txt;
+        resEl.innerHTML=mdRender(txt);
+        if(txt.length>MD_FOLD_LEN && !card.querySelector(".tc-result-toggle")){
+          resEl.classList.add("clamped");
+          var rb=document.createElement("button");
+          rb.type="button";rb.className="tc-result-toggle";rb.textContent="展开全文";
+          rb.addEventListener("click",function(){
+            resEl.classList.toggle("clamped");
+            rb.textContent=resEl.classList.contains("clamped")?"展开全文":"收起";
+          });
+          card.appendChild(rb);
         }
+      }
+      poll(); // 刷新顶部编排器面板
+      return false; // 终态：调用方停止轮询
+    }
+    return true; // 仍在运行：继续轮询
+  }
+
+  function pollTaskCard(convId,taskId){
+    fetch(MAESTRO+"/api/tasks/"+taskId,{cache:"no-store"})
+      .then(function(r){return r.json()})
+      .then(function(snap){
+        if(!snap||!snap.task)return;
+        if(!renderTaskCard(convId,snap))return; // 终态或窗口关闭：停
         setTimeout(function(){pollTaskCard(convId,taskId)},2000);
       })
       .catch(function(){setTimeout(function(){pollTaskCard(convId,taskId)},4000)});
@@ -1371,7 +1514,7 @@
     var kind=convMeta[targetId].kind;
     winAppendMsg(targetId,"user",v);
     if(kind==="chat")showTyping(targetId); // 芙莉莲正在输入…
-    if(w.data.kind==="chat"){
+    if(kind==="chat"){
       // 聊天模式：流式回复（SSE）
       fetch(MAESTRO+"/api/chat/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:v,conv_id:targetId,link_conv_ids:(convLinks[targetId]||[])})})
         .then(function(resp){
@@ -1489,7 +1632,7 @@
           chip.className="agent-chip"+(a.available?"":" disabled");
           chip.dataset.name=a.name;
           chip.title=a.desc+(a.available?"":"（未连接）");
-          chip.innerHTML='<input type="checkbox" value="'+a.name+'" />'+
+          chip.innerHTML='<input type="checkbox" value="'+escapeHtml(a.name)+'" />'+
             '<span class="chip-check"></span>'+
             '<span>'+escapeHtml(a.label)+'</span>'+
             '<span class="chip-dot"></span>';

@@ -106,6 +106,37 @@ def test_frontend_smoke(server):
         page.wait_for_timeout(300)
         assert page.locator("#link-pop.show").count() == 1
 
+        # 发消息路径（stub /api/chat/stream：不依赖真实 LLM）
+        # 回归防护：doSend 曾引用未定义变量导致整条发送链路崩溃
+        page.evaluate("""() => {
+          const orig = window.fetch;
+          window.fetch = function(url, opts){
+            if(String(url).includes("/api/chat/stream")){
+              const body = JSON.parse(opts.body);
+              const NL = String.fromCharCode(10);
+              const frame = "data: " + JSON.stringify({delta: "收到：" + body.message}) + NL + NL +
+                            "data: " + JSON.stringify({done: true, reply: "收到：" + body.message}) + NL + NL;
+              return Promise.resolve(new Response(frame,
+                {status: 200, headers: {"Content-Type": "text/event-stream"}}));
+            }
+            return orig.apply(this, arguments);
+          };
+          // 切回聊天 tab，选中窗口 e2eA 的会话
+          document.getElementById("mode-chat").click();
+          selectedWinId = "e2eA";
+        }""")
+        page.fill("#dock-input", "冒烟消息")
+        page.click("#dock-send")
+        page.wait_for_timeout(800)
+        # 断言：user 气泡出现 + assistant 气泡含流式回复（且没有崩溃残留的空 typing 气泡）
+        assert page.locator('.win-msgs[data-conv="e2eA"] .win-msg.user').count() >= 1, "用户消息未入列"
+        last = page.evaluate("""() => {
+          const b = document.querySelector('.win-msgs[data-conv="e2eA"]');
+          const a = b.querySelectorAll('.win-msg.assistant');
+          return a.length ? a[a.length-1].textContent : "";
+        }""")
+        assert "冒烟消息" in last, f"流式回复未渲染: {last!r}"
+
         # 页面 JS 错误
         assert not errors, f"页面 JS 报错: {errors}"
         browser.close()
