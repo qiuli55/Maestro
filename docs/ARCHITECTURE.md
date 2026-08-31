@@ -18,65 +18,19 @@
 
 ## 二、模块依赖图
 
-```mermaid
-graph TD
-    subgraph "入口层"
-        CLI[cli.py<br/>命令行]
-        Server[server.py<br/>FastAPI+WebSocket]
-    end
+完整模块分层与跨区数据流见 **`docs/diagrams/01-overview.html`**（自包含 HTML，34 个色块 + 20 条跨区连线 + 8 色图例）。5 大泳道：
 
-    subgraph "编排层"
-        Orchestrator[orchestrator.py<br/>Orchestrator-Workers]
-        Split[split.py<br/>场景 A/B/C]
-        Merge[merge.py<br/>汇总+冲突裁决]
-    end
+| 泳道 | 模块 | 颜色 |
+|---|---|---|
+| 入口层 | CLI、Server、Chat、Models/Keys、Guard（防线1）| 蓝 |
+| 编排层 | Orchestrator、Split、Merge、HITL 闸门、后台线程池 | 紫 |
+| 执行层 / Worker | Embedded、OpenCode、Octo、WorkBuddy、CodeBuddy、MiniMax | 蓝绿 |
+| 嵌入式内部 | runcmd（白名单）、filetools、Sandbox（防线2）| 橙 |
+| 模型 & 状态层 | LLM 弹性、SQLite、WS、Metrics、configs、Web 前端 | 紫红 |
 
-    subgraph "安全层"
-        Guard[guard.py<br/>静态规则扫描]
-        Sandbox[sandbox.py<br/>审批中心]
-    end
+> 下图为完整渲染版（直接 GitHub 渲染器对 Mermaid 支持不全，建议双击 HTML 看效果）：
 
-    subgraph "执行层"
-        WorkersBase[workers/base.py<br/>SubprocessWorker 协议]
-        Embedded[workers/embedded.py<br/>DeepSeek+工具]
-        OpenCode[workers/opencode.py]
-        Octo[workers/octo.py]
-        MiniMax[workers/minimax.py]
-        RunCmd[workers/runcmd.py<br/>受控命令执行]
-        FileTools[workers/filetools.py]
-    end
-
-    subgraph "模型层"
-        LLM[llm.py<br/>多 provider]
-        Chat[chat.py<br/>数字人闲聊]
-    end
-
-    subgraph "状态层"
-        DB[db.py<br/>SQLite]
-        Config[config.py<br/>prompts+providers+workers]
-    end
-
-    CLI --> Orchestrator
-    Server --> Orchestrator
-    Server --> Chat
-    Orchestrator --> Split
-    Orchestrator --> Merge
-    Orchestrator --> Guard
-    Orchestrator --> WorkersBase
-    Orchestrator --> DB
-    WorkersBase --> OpenCode
-    WorkersBase --> Octo
-    WorkersBase --> MiniMax
-    WorkersBase --> Embedded
-    Embedded --> RunCmd
-    Embedded --> FileTools
-    Embedded --> LLM
-    RunCmd --> Sandbox
-    Chat --> LLM
-    Chat --> DB
-    Sandbox --> DB
-    LLM --> Config
-```
+![全局鸟瞰](diagrams/01-overview.svg-thumb)
 
 **依赖倒置**：Orchestrator 只依赖 `workers.base.SubprocessWorker` 抽象协议，不直接 know 具体 worker 实现。
 
@@ -86,34 +40,13 @@ graph TD
 
 ### 任务状态机
 
-```mermaid
-stateDiagram-v2
-    [*] --> pending: create_task
-    pending --> ready: 拆分完成<br/>（人工闸门）
-    ready --> running: 用户确认 execute
-    ready --> cancelled: 用户取消
-    pending --> cancelled: 用户取消
-    running --> done: 全部子任务成功
-    running --> failed: 全部子任务失败
-    running --> cancelled: 用户取消
-    done --> [*]
-    failed --> [*]
-    cancelled --> [*]
-```
+7 个状态：pending → ready → running → done / failed / cancelled（含 retry 循环）。
+完整 Mermaid 状态图见 **`docs/diagrams/02-task-state-machine.md`**。
 
 ### 子任务状态机
 
-```mermaid
-stateDiagram-v2
-    [*] --> pending
-    pending --> running: worker.spawn()
-    running --> done: 成功
-    running --> failed: 超时/错误
-    failed --> retry: 手动 retry
-    retry --> running: 再次派发
-    done --> [*]
-    failed --> [*]
-```
+6 个状态：pending → running → done / failed + retry 循环。
+完整 Mermaid 状态图见 **`docs/diagrams/03-subtask-state-machine.md`**。
 
 ---
 
@@ -266,6 +199,20 @@ split.split_plan() → LLM 拆成结构化步骤
 | 低 | 完整 LLM 决策路由 | 风险高 / 等 worker > 10 再做 |
 
 ---
+
+## 可视化索引（docs/diagrams/）
+
+所有架构图、状态机、时序、防线的可视化在 [`docs/diagrams/`](diagrams/)：
+
+| 文件 | 类型 | 内容 |
+|---|---|---|
+| `01-overview.html` | SVG | 全局鸟瞰（5 泳道 + 跨区连线 + 防线标注，自包含 HTML） |
+| `02-task-state-machine.md` | Mermaid | 任务状态机（7 态转换 + 取消路径） |
+| `03-subtask-state-machine.md` | Mermaid | 子任务状态机（retry 循环 + 嵌入式特殊路径） |
+| `04-scenario-sequence.md` | Mermaid sequence | 场景 A/B/C 数据流时序（共享骨架） |
+| `05-sandbox-defense.md` | Mermaid flowchart | 双层防线 + 真攻击拦截示例（11 个） |
+
+GitHub/GitLab/VSCode preview 自动渲染 Mermaid；鸟瞰图推荐本地双击 HTML 查看（更丰富颜色 + 跨区连线）。
 
 ## 九、参考资料
 
