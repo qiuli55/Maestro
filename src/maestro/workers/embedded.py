@@ -15,16 +15,19 @@ from .base import WorkerResult, register
 from .filetools import safe_read
 from .runcmd import run as run_command
 
-# 输出目录：从 MAESTRO_OUTPUTS 环境变量读，缺省走项目根 outputs/。
-# 模块导入时不执行 mkdir（懒加载到首次写入），避免跨平台硬编码 + import 副作用。
-_DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[3] / "outputs"
-OUTPUT_DIR = Path(os.environ.get("MAESTRO_OUTPUTS", _DEFAULT_OUTPUT_DIR))
+from .. import runtime as _runtime_mod
+
+# 输出目录：MAESTRO_OUTPUTS 优先；未设走 runtime.outputs_dir()（PyInstaller frozen
+# 兼容——MAESTRO_HOME 或 exe 同级自动建 outputs/）。
+def _resolve_output_dir() -> Path:
+    p = Path(os.environ.get("MAESTRO_OUTPUTS") or _runtime_mod.outputs_dir())
+    p.mkdir(parents=True, exist_ok=True)
+    return p
 
 
 def _ensure_output_dir() -> Path:
     """懒加载：首次写入时建目录。"""
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    return OUTPUT_DIR
+    return _resolve_output_dir()
 
 
 _SYSTEM = (
@@ -169,7 +172,7 @@ def _executor(workdir: str, task_id: str | None = None, subtask_id: str | None =
 
         elif name == "list_files":
             try:
-                files = list(OUTPUT_DIR.glob("*"))
+                files = list(_resolve_output_dir().glob("*"))
                 if not files:
                     return "[list_files] 输出目录为空"
                 return "[list_files] " + "\n".join(f"- {f.name}" for f in files)

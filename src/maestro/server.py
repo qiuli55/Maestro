@@ -147,6 +147,45 @@ class _APIKeyAuthMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(_APIKeyAuthMiddleware)
 
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """统一注入安全响应头（XSS / clickjacking / MIME sniffing / referrer 防御）。
+
+    CSP 故意保持宽松（允许 'unsafe-inline' 样式 + 同源 img/connect/frame）——
+    前端是单文件 + 内联 inline style + 使用 fetch/EventSource，前端重构到 ES
+    modules + 外部样式后可逐步收紧。/metrics 文本格式不走 HTML，CSP 不影响。
+    """
+
+    _PATH_PASSTHROUGH = frozenset({"/metrics"})  # 文本响应不受 CSP 影响
+
+    async def dispatch(self, request, call_next):
+        resp = await call_next(request)
+        # nosniff / clickjacking / referrer：直接赋值（BaseHTTPMiddleware 的
+        # MutableHeaders 用 setdefault 在某些路径不生效）
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        # CSP：仅对 HTML 响应注入（静态/JSON/流式跳过，避免污染 text/event-stream）
+        ctype = resp.headers.get("Content-Type", "")
+        if (resp.headers.get("Content-Type", "").startswith("text/html") or
+                (request.url.path == "/" and not resp.headers.get("Content-Type"))):
+            # 内联样式不可避免（pet_q 视差 + 一些 UI 微样式）；script 全部走 app.js
+            resp.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "img-src 'self' data: blob:; "
+                "style-src 'self' 'unsafe-inline'; "
+                "script-src 'self'; "
+                "connect-src 'self' ws: wss:; "
+                "frame-ancestors 'none'; "
+                "base-uri 'self'; "
+                "form-action 'self'"
+            )
+        return resp
+
+
+app.add_middleware(_SecurityHeadersMiddleware)
+
+
 # ====== 路由注册（按域） ======
 app.include_router(api_meta.router)
 app.include_router(api_tasks.router)
