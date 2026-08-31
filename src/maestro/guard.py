@@ -1,16 +1,15 @@
-"""外部 CLI prompt 前置检测 v2：危险原语白名单 + AST token 解析。
+"""外部 CLI prompt 前置检测：归一化 + 危险原语匹配 + 中文补充规则。
 
-设计要点（见 docs/ARCHITECTURE.md）：
-- v1 用字符串子串匹配：漏掉很多混淆（编码/空格/中英文），漏判率 46%。
-- v2 改为预处理 + token 化 + 危险原语白名单：
-  1. 预处理：去引号/去零宽/URL decode/bash 变量还原 → 真实意图
-  2. token 化：按空白 split，识别 (命令, 参数) 元组
-  3. 白名单：format/shutdown/reboot/rm-rf/reg*/powershell 等高危命令
-  4. 保留 v1 规则作为中文场景补充（与 v2 一起 OR 决策）
 
-历史背景：
-- v1 在 2026-08-20 落地（commit d8e83d2/3d8d44d），漏判严重
-- v2 在 2026-08-21 重写（commit 待定）
+
+设计要点：
+- 归一化：去引号/去零宽字符/URL decode/bash IFS 还原/反斜杠统一
+- 危险原语白名单（精确 token 化）：format/shutdown/reboot/rm-rf/reg*/powershell 等
+- 中文补充规则覆盖本地化场景（删除系统盘、重启电脑、密钥外传等）
+- 恶意工具名（ransomware/sqlmap/metasploit/矿）独立短路返回 block
+
+历史：v1 用子串匹配漏判率 46%，已替换为 token + 危险原语白名单；
+中文场景作补充规则与英文 OR 决策（_CN_BLOCK_PATTERNS）。
 """
 from __future__ import annotations
 
@@ -239,16 +238,11 @@ def _scan_normalized(norm: str) -> tuple[str, str | None]:
     return ("ok", None)
 
 
-def scan(prompt: str, worker_type: str | None = None) -> tuple[str, str | None]:
+def scan(prompt: str) -> tuple[str, str | None]:
     """扫描 prompt。返回 (level, reason)：
     - ("ok", None)：无风险
     - ("warn", reason)：中危，建议写事件日志警示
     - ("block", reason)：高危，应拦截子任务
-
-    Args:
-        prompt: 待扫描的用户 prompt
-        worker_type: 仅对 SubprocessWorker（opencode/octo/minimax）触发；
-                     embedded 有工具白名单+审批流兜底，不重复扫描。
     """
     if not prompt:
         return ("ok", None)
@@ -261,32 +255,3 @@ def scan(prompt: str, worker_type: str | None = None) -> tuple[str, str | None]:
 
 
 # ============================================================================
-# v1 兼容（保留旧版本接口的 inline，避免破坏外部 import）
-# ============================================================================
-
-# v1 的原始 block 规则（保留供 v1 风格审计使用，调用方用 _scan_v1）
-_BLOCK_PATTERNS_V1: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"format\s+[a-z]:", re.I), "格式化磁盘/盘符"),
-    (re.compile(r"格式化(?:磁盘|硬盘|[c-z]盘)", re.I), "格式化磁盘"),
-    (re.compile(
-        r"\b(?:rm|del|erase|rd|rmdir)\b[^\n]{0,40}[a-z]:[\\/]\s*(?:[\\/]|\*|$)", re.I),
-     "删除盘符根目录"),
-    (re.compile(r"(?:删除|删掉|清空)\s*[c-z]\s*盘", re.I), "删除系统盘内容"),
-    (re.compile(r"\bshutdown\b", re.I), "关机/重启系统"),
-    (re.compile(r"(?:关机|重启电脑|关闭系统)", re.I), "关机/重启系统"),
-    (re.compile(
-        r"(?:curl|wget|certutil|bitsadmin|mshta)[^\n]{0,80}(?:-o\s|-O\s|-OutFile|/urlcache|download)",
-        re.I), "下载文件到本机"),
-    (re.compile(r"(?:下载|获取).{0,20}(?:并)?(?:执行|运行|安装)", re.I), "下载并执行"),
-    (re.compile(r"reg\s+(?:add|delete|import|save)", re.I), "修改注册表"),
-    (re.compile(
-        r"(?:bypass\s+uac|getsystem|提权|创建(?:管理员)?账户|net\s+user\s+\S+\s+\S+\s*/add)",
-        re.I), "权限提升/创建账户"),
-    (re.compile(r"(?:ransomware|勒索|挖矿|miner|sqlmap|metasploit)", re.I), "恶意程序/攻击工具"),
-    (re.compile(
-        r"(?:api[_-]?key|secret|token|password).{0,30}(?:发送|上传|提交|外传|post到|发到)",
-        re.I), "密钥外传"),
-    (re.compile(
-        r"(?:把|将).{0,20}(?:\.env|密钥|token|api[_-]?key).{0,20}(?:发送|上传|提交)",
-        re.I), "密钥外传"),
-]

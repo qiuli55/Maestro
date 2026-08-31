@@ -18,7 +18,9 @@ CANCELLED = "cancelled"  # 用户手动取消（终态）
 
 VALID_STATUS = {PENDING, READY, RUNNING, DONE, FAILED, RETRY, CANCELLED}
 
-DEFAULT_DB = Path(__file__).resolve().parents[2] / "maestro.db"
+from . import runtime as _runtime_mod
+
+DEFAULT_DB = _runtime_mod.data_dir() / "maestro.db"
 
 DEFAULT_CONV_ID = "conv_default"  # 存量消息的默认会话
 

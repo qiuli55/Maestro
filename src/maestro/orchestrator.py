@@ -15,7 +15,10 @@ from . import db, guard, merge, observability, split
 from .workers import base as wbase
 from .workers.base import get_worker
 
-OUTPUTS_ROOT = Path(os.environ.get("MAESTRO_OUTPUTS", Path(__file__).resolve().parents[2] / "outputs"))
+from . import runtime as _runtime_mod
+
+# 任务产物目录：MAESTRO_OUTPUTS 优先；未设则项目根/outputs（自动创建）
+OUTPUTS_ROOT = Path(os.environ.get("MAESTRO_OUTPUTS") or _runtime_mod.outputs_dir())
 
 
 def _workdir(task_id: str, subtask_id: str) -> Path:
@@ -71,7 +74,7 @@ def _execute_subtask(db_path: str, task_id: str, subtask: dict, timeout: int, mo
         # 沙箱防线 1：外部 CLI（黑盒 agent）派发前对 prompt 做危险指令前置检测。
         # embedded 有工具白名单+审批流兜底，不重复扫描（避免误伤正常代码需求）。
         if isinstance(worker, wbase.SubprocessWorker):
-            level, reason = guard.scan(subtask["desc"], subtask["worker_type"])
+            level, reason = guard.scan(subtask["desc"])
             if level == "block":
                 db.set_subtask_output(tconn, sid, db.FAILED, error=f"[沙箱拦截] {reason}")
                 db.log_event(tconn, task_id, f"subtask {sid} BLOCKED by guard", sid, data={"reason": reason})

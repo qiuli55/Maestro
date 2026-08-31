@@ -11,7 +11,10 @@ from pathlib import Path
 
 import yaml
 
-_ROOT = Path(__file__).resolve().parents[2]
+# 项目根：通过 runtime 统一解析（源码 vs PyInstaller 打包路径都正确）
+from . import runtime as _runtime_mod  # noqa: F401 循环导入兜底
+
+_ROOT = _runtime_mod.project_root()
 _PROMPTS_PATH = _ROOT / "configs" / "prompts.yaml"
 _WORKERS_PATH = _ROOT / "configs" / "workers.json"
 _PROVIDERS_PATH = _ROOT / "configs" / "providers.json"

@@ -42,7 +42,10 @@ observability.setup_logging()  # 结构化日志（受 LOG_LEVEL / LOG_FORMAT �
 log = observability.get_logger(__name__)
 log.info("maestro starting", extra={"version": "0.2", "workers": _wmod.available_workers()})
 
-ROOT = Path(__file__).resolve().parents[2]
+from . import runtime as _runtime_mod
+
+# 项目根 + 静态目录：打包后 ROOT 来自 MAESTRO_HOME 或 exe 同级（runtime 统一解析）
+ROOT = _runtime_mod.project_root()
 WEB_DIR = ROOT / "web"
 WALLPAPER_DIR = ROOT / "wallpaper"
 
