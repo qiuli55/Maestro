@@ -94,8 +94,8 @@ _BLOCKING_PRIMITIVES: list[tuple[re.Pattern, str]] = [
     (re.compile(rf"\brm\b\s+(?:-[rf]+\s+)?(?:--\s+)?{_CRITICAL_PATHS}", re.I),
      "rm 删除关键路径（含前导语）"),
 
-    # === 关机/重启（任意系统） ===
-    (re.compile(r"^(?:shutdown|reboot|halt|poweroff|init\s+[06])\b", re.I),
+    # === 关机/重启（任意系统，前面可有引导语如"请帮我执行 shutdown"）===
+    (re.compile(r"\b(?:shutdown|reboot|halt|poweroff)\b", re.I),
      "关机/重启系统"),
     # "重启服务/电脑/系统" 中文（v1 规则不覆盖的）
     (re.compile(r"(?:系统|电脑)\s*(?:重启|关机|关闭)", re.I),
@@ -157,7 +157,8 @@ _BLOCKING_PRIMITIVES: list[tuple[re.Pattern, str]] = [
 
 # 恶意工具名（独立一类，出现即 block）
 _MALICIOUS_TOOLS = re.compile(
-    r"\b(?:ransomware|cryptolocker|sqlmap|metasploit|msfvenom|hydra|nikto|aircrack|sqlninja)\b",
+    r"\b(?:ransomware|cryptolocker|sqlmap|metasploit|msfvenom|hydra|nikto|aircrack|sqlninja|miner)\b"
+    r"|勒索|挖矿|\bprivilege\b.{0,20}escalation\b|\bbypass\s+uac\b",
     re.I,
 )
 
@@ -179,6 +180,12 @@ _CN_BLOCK_PATTERNS: list[tuple[re.Pattern, str]] = [
     # 修改注册表/hosts/系统配置
     (re.compile(r"(?:修改|编辑|改)\s*(?:注册表|hosts|系统配置|启动项|环境变量)", re.I),
      "中文修改系统配置"),
+    # 下载并执行
+    (re.compile(r"(?:下载|获取|拉取).{0,30}(?:并\s*)?(?:执行|运行|安装)", re.I),
+     "下载并执行"),
+    # 中文提权/账户篡改
+    (re.compile(r"(?:提权|越权|权限提升|创建(?:管理员)?账户|添加管理员|改密码|劫持)", re.I),
+     "权限提升/账户篡改"),
 ]
 
 # 警告级（不动盘符的删除/安装/下载等，正当场景也存在）
@@ -217,8 +224,10 @@ def _scan_normalized(norm: str) -> tuple[str, str | None]:
     tokens[0]
 
     # 0. 恶意工具名（独立检查）
-    if _MALICIOUS_TOOLS.search(norm):
-        return ("block", "检测到恶意工具名（ransomware/sqlmap/metasploit 等），已拦截。")
+    mt = _MALICIOUS_TOOLS.search(norm)
+    if mt:
+        hit = (mt.group(0) or "").strip() or "恶意工具"
+        return ("block", f"检测到高危指令：恶意工具/关键字（{hit}），已拦截。")
 
     # 1. 命令起始规则（更精确，针对具体命令+参数）
     for pat, desc in _BLOCKING_PRIMITIVES:

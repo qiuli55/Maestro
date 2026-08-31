@@ -62,11 +62,29 @@ _TLS = threading.local()
 
 
 def _get_conn():
-    """取当前线程的 SQLite 连接（懒初始化，跨线程独立）。"""
+    """取当前线程的 SQLite 连接（懒初始化，跨线程独立）。
+
+    响应 MAESTRO_DB 切换：env 变时丢弃旧连接重开（测试隔离 + 多租户未来需要）。
+    """
+    import os as _os
+
+    cur_path = _os.environ.get("MAESTRO_DB", "")
+    cache_path = getattr(_TLS, "db_path", None)
+    if cache_path != cur_path:
+        # env 变了（测试隔离 / 多库切换）→ 关闭旧连接重开
+        old = getattr(_TLS, "conn", None)
+        if old is not None:
+            try:
+                old.close()
+            except Exception:  # noqa: BLE001
+                pass
+        _TLS.conn = None
+        _TLS.db_path = cur_path
     conn = getattr(_TLS, "conn", None)
     if conn is None:
         conn = db.init_db()
         _TLS.conn = conn
+        _TLS.db_path = cur_path
     return conn
 
 
@@ -168,9 +186,12 @@ def request_approval(
 
 
 def decide(approval_id: str, approve: bool) -> bool:
-    """用户决定：approve=True 放行，False 拒绝。返回是否找到并生效。"""
+    """用户决定：approve=True 放行，False 拒绝。返回是否找到并生效。
+
+    找到后从注册表摘除并持久化结果，二次 decide 同一 id 返回 False（防重复处理）。
+    """
     with _LOCK:
-        req = _REGISTRY.get(approval_id)
+        req = _REGISTRY.pop(approval_id, None)
         if not req:
             return False
         req.decision = "approved" if approve else "rejected"
