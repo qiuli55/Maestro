@@ -10,4 +10,16 @@
 | 4 | `04-scenario-sequence.md` | Mermaid sequence | 场景 A/B/C 数据流时序 |
 | 5 | `05-sandbox-defense.md` | Mermaid flowchart | 双层安全防线（真攻击拦截示例） |
 
+## archify 产品级版本（自包含交互 HTML）
+
+| 文件 | 类型 | 说明 |
+|---|---|---|
+| `01b-overview-archify.html` | archify architecture | 全局架构（深浅主题/搜索/PNG·SVG·WebM 导出） |
+| `01b-overview-archify.json` | JSON spec | 上图的输入规格（validate 9/9） |
+| `06-task-lifecycle-archify.html` | archify workflow | 任务全生命周期（6 泳道 × 6 列 + 防线/审批/失败分支，trace 动画） |
+| `06-task-lifecycle.workflow.json` | JSON spec | 上图的输入规格（showcase 0 errors 0 warnings） |
+
+重新渲染：`node archify/bin/archify.mjs deliver <type> <spec.json> <out.html>`
+（archify 安装于 `~/.zcode/cli/plugins/marketplaces/archify/`）
+
 `docs/ARCHITECTURE.md` 已合并上述图；GitHub/GitLab/VSCode preview 自动渲染 Mermaid。

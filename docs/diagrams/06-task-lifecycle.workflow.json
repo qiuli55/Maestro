@@ -1,0 +1,436 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Maestro 任务全生命周期",
+    "subtitle": "从用户输入到结果落库：拆分 → 闸门 → 派发 → 防线 → 汇总",
+    "output": "maestro-task-lifecycle.html",
+    "animation": "trace",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "submit-and-split",
+        "label": "提交与拆分",
+        "focus": [
+          "input",
+          "create",
+          "split",
+          "ready"
+        ],
+        "note": "用户输入经场景路由拆分为子任务，停在人工闸门。"
+      },
+      {
+        "id": "gate-and-dispatch",
+        "label": "确认与派发",
+        "focus": [
+          "ready",
+          "confirm",
+          "dispatch",
+          "guard"
+        ],
+        "note": "用户确认后进 running，外部 CLI 派发前过防线 1。"
+      },
+      {
+        "id": "defense-and-approval",
+        "label": "防线与审批",
+        "focus": [
+          "guard",
+          "runcmd",
+          "approval",
+          "blocked"
+        ],
+        "note": "三档分级：白名单直跑 / 越权审批 / 灾难拒绝。"
+      },
+      {
+        "id": "merge-and-finish",
+        "label": "汇总与收尾",
+        "focus": [
+          "collect",
+          "merge",
+          "done",
+          "failed"
+        ],
+        "note": "子任务收齐后 LLM 汇总，终态落库并推 WS。"
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "user",
+      "label": "用户"
+    },
+    {
+      "id": "server",
+      "label": "Server / 编排器"
+    },
+    {
+      "id": "defense",
+      "label": "安全防线"
+    },
+    {
+      "id": "approval",
+      "label": "人工审批"
+    },
+    {
+      "id": "worker",
+      "label": "Worker"
+    },
+    {
+      "id": "exceptions",
+      "label": "取消 / 失败",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "phase-submit",
+      "label": "提交 + 拆分",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "phase-gate",
+      "label": "人工闸门",
+      "fromCol": 2,
+      "toCol": 2,
+      "variant": "emphasis"
+    },
+    {
+      "id": "phase-run",
+      "label": "派发 + 防线",
+      "fromCol": 3,
+      "toCol": 4,
+      "variant": "emphasis"
+    },
+    {
+      "id": "phase-finish",
+      "label": "汇总 + 终态",
+      "fromCol": 5,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "groups": [
+    {
+      "id": "grp-hitl",
+      "label": "人工确认（可编辑子任务）",
+      "lane": "server",
+      "fromCol": 2,
+      "toCol": 2,
+      "variant": "emphasis"
+    },
+    {
+      "id": "grp-approval",
+      "label": "越权命令等待用户决定（120s 超时）",
+      "lane": "approval",
+      "fromCol": 3,
+      "toCol": 4,
+      "variant": "security"
+    }
+  ],
+  "mainPath": [
+    "input",
+    "create",
+    "split",
+    "ready",
+    "confirm",
+    "dispatch",
+    "guard",
+    "runcmd",
+    "collect",
+    "merge",
+    "done"
+  ],
+  "nodes": [
+    {
+      "id": "input",
+      "lane": "user",
+      "col": 0,
+      "type": "external",
+      "label": "输入",
+      "sublabel": "聊天/任务",
+      "width": 44
+    },
+    {
+      "id": "create",
+      "lane": "server",
+      "col": 0,
+      "type": "backend",
+      "label": "create",
+      "sublabel": "fast池",
+      "width": 44
+    },
+    {
+      "id": "split",
+      "lane": "server",
+      "col": 1,
+      "type": "backend",
+      "label": "拆分",
+      "sublabel": "A/B/C/auto",
+      "width": 44
+    },
+    {
+      "id": "ready",
+      "lane": "server",
+      "col": 2,
+      "type": "database",
+      "label": "ready",
+      "sublabel": "可编辑",
+      "tag": "闸门",
+      "width": 44
+    },
+    {
+      "id": "confirm",
+      "lane": "user",
+      "col": 2,
+      "type": "external",
+      "label": "确认",
+      "sublabel": "execute",
+      "width": 44
+    },
+    {
+      "id": "dispatch",
+      "lane": "server",
+      "col": 3,
+      "type": "backend",
+      "label": "execute",
+      "sublabel": "slow池",
+      "width": 44
+    },
+    {
+      "id": "guard",
+      "lane": "defense",
+      "col": 3,
+      "type": "security",
+      "label": "防线1",
+      "sublabel": "block/warn",
+      "width": 44
+    },
+    {
+      "id": "runcmd",
+      "lane": "worker",
+      "col": 3,
+      "type": "backend",
+      "label": "执行",
+      "sublabel": "白名单",
+      "width": 44
+    },
+    {
+      "id": "approval",
+      "lane": "approval",
+      "col": 4,
+      "type": "security",
+      "label": "审批",
+      "sublabel": "120s超时",
+      "width": 44
+    },
+    {
+      "id": "collect",
+      "lane": "worker",
+      "col": 4,
+      "type": "database",
+      "label": "落库",
+      "sublabel": "result.md",
+      "width": 44
+    },
+    {
+      "id": "merge",
+      "lane": "server",
+      "col": 5,
+      "type": "backend",
+      "label": "汇总",
+      "sublabel": "冲突审计",
+      "width": 44
+    },
+    {
+      "id": "done",
+      "lane": "user",
+      "col": 5,
+      "type": "database",
+      "label": "结果",
+      "sublabel": "WS推送",
+      "width": 44
+    },
+    {
+      "id": "failed",
+      "lane": "exceptions",
+      "col": 5,
+      "type": "database",
+      "label": "failed",
+      "sublabel": "可retry",
+      "width": 44
+    },
+    {
+      "id": "blocked",
+      "lane": "exceptions",
+      "col": 4,
+      "type": "security",
+      "label": "拦截",
+      "width": 44
+    }
+  ],
+  "edges": [
+    {
+      "from": "input",
+      "to": "create",
+      "variant": "emphasis",
+      "role": "main",
+      "route": "drop"
+    },
+    {
+      "from": "create",
+      "to": "split",
+      "variant": "emphasis",
+      "role": "main",
+      "route": "bottom-channel"
+    },
+    {
+      "from": "split",
+      "to": "ready",
+      "variant": "emphasis",
+      "role": "main",
+      "route": "drop"
+    },
+    {
+      "from": "ready",
+      "to": "confirm",
+      "variant": "dashed",
+      "role": "return"
+    },
+    {
+      "from": "confirm",
+      "to": "dispatch",
+      "variant": "emphasis",
+      "role": "main",
+      "route": "drop"
+    },
+    {
+      "from": "dispatch",
+      "to": "guard",
+      "label": "外部 CLI",
+      "variant": "security",
+      "route": "drop"
+    },
+    {
+      "from": "guard",
+      "to": "runcmd",
+      "variant": "emphasis",
+      "role": "main",
+      "route": "drop",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "from": "guard",
+      "to": "blocked",
+      "variant": "security",
+      "role": "error",
+      "route": "return-left",
+      "fromSide": "left",
+      "toSide": "left",
+      "channelX": 560,
+      "via": [
+        [
+          16,
+          367
+        ],
+        [
+          16,
+          739
+        ],
+        [
+          460,
+          739
+        ]
+      ]
+    },
+    {
+      "from": "runcmd",
+      "to": "approval",
+      "variant": "security",
+      "route": "drop"
+    },
+    {
+      "from": "runcmd",
+      "to": "collect",
+      "variant": "emphasis",
+      "role": "main",
+      "route": "bottom-channel"
+    },
+    {
+      "from": "collect",
+      "to": "merge",
+      "variant": "emphasis",
+      "role": "main",
+      "route": "bottom-channel"
+    },
+    {
+      "from": "merge",
+      "to": "done",
+      "variant": "emphasis",
+      "role": "main",
+      "route": "drop"
+    },
+    {
+      "from": "collect",
+      "to": "failed",
+      "variant": "security",
+      "role": "error",
+      "route": "outside-right",
+      "fromSide": "right",
+      "toSide": "right",
+      "channelX": 700
+    },
+    {
+      "from": "merge",
+      "to": "failed",
+      "variant": "security",
+      "role": "error",
+      "route": "drop",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "拆分方式",
+      "items": [
+        "场景 A：按行切（多需求清单）",
+        "场景 B：按段落切（长文本）",
+        "场景 C：LLM 拆步骤（抽象任务）",
+        "工作流：用户编排的启用卡片直通"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "人工闸门",
+      "items": [
+        "ready 态可整体替换子任务列表",
+        "confirm=false 跳过闸门自动执行",
+        "工作流模式可勾选'引用上一环节产出'"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "双层防线",
+      "items": [
+        "防线1 Guard：恶意 prompt 直接 block 子任务",
+        "防线2 runcmd 三档：白名单直跑 / 越权审批 / 灾难拒绝",
+        "审批经 WS 实时推送，120s 未决定 = timedout",
+        "60 个 e2e 用例验证（tests/test_sandbox_security.py）"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "终态语义",
+      "items": [
+        "瞬时故障（超时/网络/5xx）自动重试 1 次",
+        "永久失败（参数错/bin 缺失）不重试避免重复计费",
+        "取消是终态：协作式 cancel_requested_at 贯穿派发全程",
+        "任务失败不静默：落 FAILED + 事件日志 + WS 推送"
+      ]
+    }
+  ]
+}
