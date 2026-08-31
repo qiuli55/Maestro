@@ -485,3 +485,33 @@ def test_metrics_endpoint(tmp_path, monkeypatch):
     assert rj.status_code == 200
     data = rj.json()
     assert "tasks_total" in data and "uptime_seconds" in data and "pool" in data
+
+
+def test_health_dashboard_endpoint(tmp_path, monkeypatch):
+    """/api/health/dashboard：状态 + 任务分布 + 待审批 + WS + 错误列表。"""
+    from fastapi.testclient import TestClient
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "m.db"))
+    # 造点数据：有任务 + 失败子任务 + 事件错误 + 待审批
+    from maestro import db, sandbox
+    conn = db.init_db(tmp_path / "m.db")
+    db.create_task(conn, "t_dash", "prompt", conv_id=None)
+    db.set_task_status(conn, "t_dash", db.FAILED)
+    db.log_event(conn, "t_dash", "subtask FAIL")
+    db.upsert_user_skill(conn, "sk_t", "测试技能", "通用", "")
+    sandbox.on_request(lambda r: None)  # 不重要
+    conn.execute("INSERT INTO approvals (id, task_id, cmd, status, created_at) VALUES (?,?,?,?,?)",
+                 ("ap1", "t_dash", "rm -rf /", "pending", db._now()))
+    conn.commit()
+    conn.close()
+
+    c = TestClient(app)
+    r = c.get("/api/health/dashboard")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] in ("ok", "warn", "degraded")
+    assert "failed" in d["tasks"] and d["tasks"]["failed"] >= 1
+    assert d["approvals_pending"] >= 1
+    assert "ws_connections" in d
+    # 有失败任务 + 待审批超阈值可能 warn
+    if d["status"] == "warn":
+        assert any(e["level"] == "warn" for e in d["errors"])

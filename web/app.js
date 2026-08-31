@@ -1110,6 +1110,58 @@
   drawFx();
 
   // Maestro 状态
+  // 状态面板数据源：/api/health/dashboard（每 5s 拉一次，与下方 poll 并存）
+  var dashboardData={tasks:{},ws_connections:0,approvals_pending:0,recent_errors:[],degraded:false};
+  function fmtRelTime(iso){
+    if(!iso) return "";
+    try{
+      var t=new Date(iso).getTime();
+      var dt=Date.now()-t;
+      if(dt<60000) return Math.floor(dt/1000)+" 秒前";
+      if(dt<3600000) return Math.floor(dt/60000)+" 分钟前";
+      if(dt<86400000) return Math.floor(dt/3600000)+" 小时前";
+      return Math.floor(dt/86400000)+" 天前";
+    }catch(e){return iso;}
+  }
+  function renderDashboard(){
+    var st=dashboardData.status||"ok";
+    if(st==="degraded"){dot.className="m-dot failed";title.textContent="服务降级";}
+    else if(st==="warn"){dot.className="m-dot running";title.textContent="需要注意";}
+    // 摘要：运行/完成/失败/待审批/WS
+    var running=dashboardData.tasks_running||0;
+    var failed=dashboardData.tasks_failed||0;
+    var ap=dashboardData.approvals_pending||0;
+    var ws=dashboardData.ws_connections||0;
+    var done=(dashboardData.tasks&&dashboardData.tasks.done)||0;
+    var parts=[];
+    parts.push("运行 "+running);
+    parts.push("完成 "+done);
+    parts.push("失败 "+failed);
+    if(ap)parts.push("待审批 "+ap);
+    if(ws>=0)parts.push("WS "+ws);
+    sub.innerHTML=parts.join(" · ")+(dashboardData.degraded?'<div style="color:#d64545;font-size:11px">数据库查询异常（面板降级）</div>':"");
+    off.style.display=st==="degraded"?"":"none";
+    var html="";
+    if(dashboardData.recent_errors&&dashboardData.recent_errors.length){
+      html+='<div class="m-item" style="color:#d64545;font-weight:600">最近错误（24h）</div>';
+      dashboardData.recent_errors.slice(0,5).forEach(function(e){
+        html+='<div class="m-item" style="font-size:11px"><span style="color:#d64545">'+fmtRelTime(e.ts)+'</span> · '+escapeHtml(String(e.event||"").slice(0,40))+'</div>';
+      });
+    }
+    var tks=dashboardData.tasks||{};
+    var tnames={"pending":"待拆分","ready":"待确认","running":"运行中","done":"已完成","failed":"已失败","retry":"重试中","cancelled":"已取消"};
+    Object.keys(tnames).forEach(function(k){
+      if(tks[k]) html+='<div class="m-item"><span class="st '+(k==="done"?"ok":(k==="failed"?"fail":"run"))+'">'+tnames[k]+'</span>'+tks[k]+' 个任务</div>';
+    });
+    listEl.innerHTML=html||'<div class="m-item" style="color:#888">暂无任务 · 去 maestro web 面板发起</div>';
+  }
+  function fetchDashboard(){
+    return fetch(MAESTRO+"/api/health/dashboard",{cache:"no-store"})
+      .then(function(r){return r.ok?r.json():null})
+      .then(function(d){if(d){dashboardData=d;renderDashboard();}})
+      .catch(function(){});
+  }
+
   var dot=document.getElementById("m-dot"),title=document.getElementById("m-title"),sub=document.getElementById("m-sub"),off=document.getElementById("m-off"),listEl=document.getElementById("m-list");
   function statusText(s){if(s==="done")return "已完成";if(s==="failed")return "失败";if(s==="running"||s==="pending")return "运行中";return s}
   function poll(){
@@ -1131,6 +1183,7 @@
     }).catch(function(){dot.className="m-dot";title.textContent="编排器未连接";sub.textContent="未找到 Maestro 服务（127.0.0.1:8787）";off.style.display="block"})
   }
   poll();setInterval(poll,3000);
+  fetchDashboard();setInterval(fetchDashboard,5000);
   window.toggleList=function(e){e.stopPropagation();listEl.classList.toggle("show")};
 
   // ---------- 会话隔离（对话隔离） ----------
