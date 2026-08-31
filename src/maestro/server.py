@@ -85,7 +85,8 @@ class _APIKeyAuthMiddleware(BaseHTTPMiddleware):
         "/api/ready",           # readiness
         "/api/workers/health",  # worker 健康
         "/",                    # 静态首页
-        "/wallpaper",           # Live2D 壁纸页
+        "/wallpaper",           # 壁纸页
+        "/metrics",             # Prometheus 指标（监控探针；内含计数不含敏感值）
     })
     _WHITELIST_PREFIXES = (
         "/ws/",                 # WebSocket（前端连 WS 不带 key，WS 自身鉴权）

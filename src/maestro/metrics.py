@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import os
 import time
-from pathlib import Path
 
 from . import db
 from .api import deps
@@ -43,7 +42,6 @@ def collect_metrics() -> dict:
         "approvals_pending": int(approval_pending),
         "ws_connections": ws_conns,
         "pool": db._pool_stats_snapshot(),
-        "db_file": str(Path(os.environ.get("MAESTRO_DB", db.DEFAULT_DB)).resolve()),
     }
 
 

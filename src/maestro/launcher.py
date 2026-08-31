@@ -28,7 +28,19 @@ from . import runtime
 from .runtime import project_root, user_data_dir
 
 
+def _port_free(port: int) -> bool:
+    """端口当前是否可绑定（复用 port.txt 前验证，避免启动后才发现被占）。"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", port))
+            return True
+    except OSError:
+        return False
+
+
 def _find_free_port(start: int = 8787, end: int = 8797) -> int:
+    # 注意：bind-then-close 存在理论 TOCTOU 窗口（探测后、使用前被抢占），
+    # 概率极低；真发生时 _wait_health 30s 超时会暴露问题而非静默。
     """返回 [start, end] 内第一个空闲端口；全占则 raise。"""
     for p in range(start, end + 1):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -112,7 +124,12 @@ def run() -> int:
     # 端口选择：CLI 强定 > 持久化端口 > 默认探测
     port = args.port
     if port is None:
-        port = _read_port_file() or _find_free_port()
+        # 持久化端口优先复用，但必须验证仍空闲（被其他应用占用则继续探测）
+        saved = _read_port_file()
+        if saved and _port_free(saved):
+            port = saved
+        else:
+            port = _find_free_port()
 
     base_url = f"http://127.0.0.1:{port}"
     _write_port_file(port)

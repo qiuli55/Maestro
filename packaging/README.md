@@ -69,7 +69,7 @@ MMX_API_KEY=mmx-zzzzzz
 ## 测试
 
 ```bash
-pytest tests/ -q                      # 436 个单元 + 集成测试（不需要打包）
+pytest tests/ -q                      # 单元 + 集成测试（不需要打包）
 pytest tests/test_e2e_smoke.py -q      # Playwright 浏览器冒烟（需 playwright）
 ```
 
