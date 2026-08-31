@@ -1120,11 +1120,11 @@
       var py=parseFloat(el.dataset.depthY||el.style.getPropertyValue("--py"))||0;
       // 保留元素已有的 transform（scale/rotate）
       var baseT=el.dataset.baseT||"";
-      // 这里用单独 transform：translate(-px*mx*PARALLAX, -py*my*PARALLAX) 叠加在原 transform 上
-      // 镜头/透视模型：鼠标右→画面左、鼠标下→画面上（x 与 y 均取反，保持一致）
-      // 因为不同对象已有不同的 scale/rotate，简单的做法是外层包 translate；简化用内联
-      el.style.marginLeft=(-px*mx*PARALLAX).toFixed(2)+"px";
-      el.style.marginTop=(-py*my*PARALLAX).toFixed(2)+"px";
+      // 这里用单独 transform：translate(px*mx*PARALLAX, py*my*PARALLAX) 叠加在原 transform 上
+      // 视线模型：鼠标右→人物/画面朝右看（跟随鼠标，不取反）。
+      // 之前取反（鼠标右→画面左）体验为"人物背对鼠标"。
+      el.style.marginLeft=(px*mx*PARALLAX).toFixed(2)+"px";
+      el.style.marginTop=(py*my*PARALLAX).toFixed(2)+"px";
     }
     requestAnimationFrame(applyParallax);
   }
@@ -1399,18 +1399,42 @@
   function convExport(id){
     window.open(MAESTRO+"/api/conversations/"+encodeURIComponent(id)+"/export","_blank");
   }
+  var convSearchQ="";
   function loadConvs(kind){
     kind=kind||convKind;
-    return fetch(MAESTRO+"/api/conversations?kind="+kind,{cache:"no-store"})
+    var url=MAESTRO+"/api/conversations?kind="+kind+
+      (convSearchQ?"&q="+encodeURIComponent(convSearchQ):"");
+    return fetch(url,{cache:"no-store"})
       .then(function(r){return r.json()})
       .then(function(d){
         var list=d.conversations||[];
         var newLabel=kind==="task"?"＋ 新建任务对话":"＋ 新建对话";
-        convListEl.innerHTML='<div class="cv-new" id="cv-new">'+newLabel+'</div>'+
-          (list.map(renderConvItem).join("")||'<div class="cv-empty">暂无会话</div>');
+        convListEl.innerHTML='<div class="cv-search"><input id="cv-search" placeholder="搜索标题或消息内容…" value="'+escapeHtml(convSearchQ)+'" /></div>'+
+          '<div class="cv-new" id="cv-new">'+newLabel+'</div>'+
+          (list.map(renderConvItem).join("")||('<div class="cv-empty">'+(convSearchQ?"无匹配会话":"暂无会话")+'</div>'));
+        bindConvSearch();
         return list;
       })
       .catch(function(){convListEl.innerHTML='<div class="cv-empty">未连接编排器</div>'});
+  }
+  // 搜索框事件（列表每次重渲染后重新绑定；300ms 防抖，Esc 清空）
+  function bindConvSearch(){
+    var inp=document.getElementById("cv-search");
+    if(!inp)return;
+    var timer=null;
+    inp.addEventListener("input",function(){
+      clearTimeout(timer);
+      timer=setTimeout(function(){
+        convSearchQ=inp.value.trim();
+        loadConvs();
+        // 重渲染后焦点回到搜索框、光标到末尾
+        var el2=document.getElementById("cv-search");
+        if(el2){el2.focus();el2.setSelectionRange(el2.value.length,el2.value.length);}
+      },300);
+    });
+    inp.addEventListener("keydown",function(e){
+      if(e.key==="Escape"){convSearchQ="";loadConvs();}
+    });
   }
   function createNewConv(title,kind){
     return fetch(MAESTRO+"/api/conversations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:title||"新对话",kind:kind||convKind})})
