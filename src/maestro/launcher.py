@@ -173,6 +173,10 @@ def run() -> int:
         return 0
 
     # 3a) 主窗口：1400x900 起步，可缩，关闭不退出 launcher（壁纸层仍在跑）
+    _icon = str(project_root() / "packaging" / "maestro.ico")
+    if not Path(_icon).exists():
+        _icon = str(Path(__file__).resolve().parents[2] / "web" / "favicon.ico")
+
     main_window = webview.create_window(
         title="Maestro",
         url=base_url + "/",
@@ -180,6 +184,7 @@ def run() -> int:
         height=900,
         min_size=(900, 600),
         resizable=True,
+        icon=_icon if Path(_icon).exists() else None,
     )
 
     # 3b) 壁纸层：独立子窗口，挂到桌面（Windows-only）；非 Win 不启
