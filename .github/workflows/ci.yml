@@ -35,8 +35,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: Dependencies sync check
+        run: python tools/check_deps_sync.py
+
       - name: Ruff (lint)
-        run: ruff check src/
+        run: ruff check src/ tests/ packaging/ tools/
 
       - name: Ruff (format check)
         run: ruff format --check src/
@@ -49,6 +52,12 @@ jobs:
           # CI 用内存 db（fast enough），不要污染磁盘
           MAESTRO_DB: ":memory:"
         run: pytest tests/ -v --tb=short --cov=src --cov-report=xml --cov-report=term
+
+      - name: Pip-audit (warn-only)
+        continue-on-error: true
+        run: |
+          python -m pip install --quiet pip-audit
+          pip-audit -r requirements.txt -r requirements-dev.txt --strict
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
