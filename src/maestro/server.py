@@ -224,6 +224,10 @@ async def _lifespan(app: FastAPI):
     await _prune()
     _backup_task = asyncio.get_running_loop().create_task(_backup_loop())
     app.state.backup_task = _backup_task  # 持引用防 GC
+    # 审批实时推送：注册 sandbox.on_request 钩子（WS 审批卡片依赖）
+    from .api.deps import _approval_push_hook as _approval_hook
+    from . import sandbox as _sandbox
+    _sandbox.on_request(_approval_hook)
     yield
     # ---- shutdown ----
     _backup_task.cancel()

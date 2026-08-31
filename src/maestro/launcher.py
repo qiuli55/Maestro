@@ -91,7 +91,8 @@ def _spawn_server(port: int) -> subprocess.Popen:
     # MAESTRO_HOME：让后端知道产物根（已写 DB / outputs / backups）
     env.setdefault("MAESTRO_HOME", str(project_root()))
     # PATH 透传
-    # cwd=src：让 -m maestro.server 能解析 maestro 包（源码运行 + 打包后 _internal/src 都可用）
+    # cwd=src/maestro：让 -m maestro.server 能解析 maestro 包
+    # （launcher 在 src/maestro/launcher.py，parents[0] 就是 src/maestro/）
     src_dir = Path(__file__).resolve().parent
     return subprocess.Popen(
         [sys.executable, "-m", "maestro.server"],
