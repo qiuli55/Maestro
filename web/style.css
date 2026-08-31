@@ -104,6 +104,11 @@
   .cv-time{font-size:10px;color:#a8a8c5;font-weight:400;flex:none}
   .cv-prev{font-size:11px;color:#9a9ab8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cv-empty{text-align:center;color:#9a9ab8;padding:16px;font-size:12px}
+  .cv-search{padding:4px 6px 6px;border-bottom:1px solid rgba(80,90,140,.1);margin-bottom:4px}
+  .cv-search input{width:100%;box-sizing:border-box;border:1.5px solid rgba(91,107,181,.25);border-radius:7px;
+    padding:5px 9px;font-size:12px;color:#33334f;background:rgba(245,247,255,.9);outline:none}
+  .cv-search input:focus{border-color:#5b6bb5;background:#fff}
+  .cv-search input::placeholder{color:#9a9ab8}
   .cv-new{padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px;color:#4d5ca5;font-weight:600;border-bottom:1px solid rgba(80,90,140,.1);margin-bottom:4px;user-select:none}
   .cv-new:hover{background:rgba(90,105,175,.12)}
   /* 历史对话面板 */

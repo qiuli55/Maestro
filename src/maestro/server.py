@@ -155,13 +155,9 @@ app.include_router(api_chat.router)
 app.include_router(api_conversations.router)
 app.include_router(api_ws.router)
 
-# ====== 启动钩子 ======
-app.add_event_handler("startup", capture_main_loop)
-app.add_event_handler("startup", prune_old_events_startup)
-
 
 async def _backup_loop() -> None:
-    """启动时立即备份一次，之后每 24h 备份（在线备份，保留 7 份）。"""
+    """每 24h 在线备份一次（保留 7 份）。启动后立即跑第一轮。"""
     import asyncio as _asyncio
 
     from . import db as _db
@@ -174,11 +170,25 @@ async def _backup_loop() -> None:
         await _asyncio.sleep(24 * 3600)
 
 
-@app.on_event("startup")
-async def _start_backup_loop():
-    import asyncio as _asyncio
+# ====== lifespan（替代弃用的 on_event；后台任务持引用防 GC） ======
+from contextlib import asynccontextmanager
 
-    _asyncio.get_running_loop().create_task(_backup_loop())
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # ---- startup ----
+    from .api.deps import capture_main_loop as _capture, prune_old_events_startup as _prune
+
+    await _capture()
+    await _prune()
+    _backup_task = asyncio.get_running_loop().create_task(_backup_loop())
+    app.state.backup_task = _backup_task  # 持引用防 GC
+    yield
+    # ---- shutdown ----
+    _backup_task.cancel()
+
+
+app.router.lifespan_context = _lifespan
 
 
 # ---------- 壁纸预览 ----------

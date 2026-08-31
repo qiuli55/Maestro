@@ -520,3 +520,27 @@ def test_stream_api_filters_self_link(tmp_db, tmp_path, monkeypatch):
     conv_id = c.post("/api/conversations", json={"title": "t", "kind": "chat"}).json()["conv_id"]
     r = c.post("/api/chat/stream", json={"message": "hi", "conv_id": conv_id, "link_conv_ids": [conv_id]})
     assert r.status_code == 200
+
+
+def test_conversation_search(tmp_db):
+    """?q= 搜标题或消息内容；LIKE 通配符转义；大小写不敏感。"""
+    c1 = db.create_conversation(tmp_db, title="芙莉莲的魔法笔记")
+    c2 = db.create_conversation(tmp_db, title="项目周报")
+    db.add_chat_message(tmp_db, "user", "帮我总结一下 SQLite 索引优化", conv_id=c2)
+    db.add_chat_message(tmp_db, "assistant", "好的", conv_id=c2)
+
+    # 按标题搜
+    r = db.list_conversations(tmp_db, q="魔法")
+    assert [x["id"] for x in r] == [c1]
+    # 按消息内容搜
+    r = db.list_conversations(tmp_db, q="索引优化")
+    assert [x["id"] for x in r] == [c2]
+    # LIKE 通配符按字面匹配（不当作通配符）
+    r = db.list_conversations(tmp_db, q="100%")
+    assert r == []
+    # 无匹配
+    assert db.list_conversations(tmp_db, q="不存在的关键词xyz") == []
+    # 组合 kind + q
+    c3 = db.create_conversation(tmp_db, title="魔法任务", kind="task")
+    r = db.list_conversations(tmp_db, kind="task", q="魔法")
+    assert [x["id"] for x in r] == [c3]

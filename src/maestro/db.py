@@ -756,32 +756,41 @@ def get_conversation(conn: sqlite3.Connection, conv_id: str) -> dict | None:
     return dict(r) if r else None
 
 
-def list_conversations(conn: sqlite3.Connection, kind: str | None = None) -> list[dict]:
-    """会话列表（按最近活跃倒序，可只取某类），带消息数与最后一条内容预览。"""
+def list_conversations(conn: sqlite3.Connection, kind: str | None = None,
+                       q: str | None = None) -> list[dict]:
+    """会话列表（按最近活跃倒序），带消息数与最后一条内容预览。
+
+    kind: 过滤会话类型；q: 搜索（标题或任意消息内容 LIKE，大小写不敏感）。
+    """
+    where = ["1=1"]
+    params: list = []
     if kind:
-        rows = conn.execute(
-            """
-            SELECT c.id, c.title, c.kind, c.updated_at,
-                   (SELECT COUNT(*) FROM chat_messages m WHERE m.conv_id = c.id) AS msg_count,
-                   (SELECT content FROM chat_messages m WHERE m.conv_id = c.id
-                     ORDER BY m.id DESC LIMIT 1) AS last_content
-            FROM conversations c
-            WHERE c.kind = ?
-            ORDER BY c.updated_at DESC
-            """,
-            (kind,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            """
-            SELECT c.id, c.title, c.kind, c.updated_at,
-                   (SELECT COUNT(*) FROM chat_messages m WHERE m.conv_id = c.id) AS msg_count,
-                   (SELECT content FROM chat_messages m WHERE m.conv_id = c.id
-                     ORDER BY m.id DESC LIMIT 1) AS last_content
-            FROM conversations c
-            ORDER BY c.updated_at DESC
-            """
-        ).fetchall()
+        where.append("c.kind = ?")
+        params.append(kind)
+    if q and q.strip():
+        # ESCAPE '\'：用户输入里的 \ % _ 按字面匹配（\ 用 chr(92) 构造避开源码转义歧义）
+        bs = chr(92)
+        where.append(
+            "(c.title LIKE ? ESCAPE '" + bs + "' OR EXISTS ("
+            "SELECT 1 FROM chat_messages m WHERE m.conv_id = c.id AND m.content LIKE ? ESCAPE '" + bs + "'))"
+        )
+        esc = ("%" + q.strip()
+               .replace(bs, bs * 2)
+               .replace("%", bs + "%")
+               .replace("_", bs + "_") + "%")
+        params.extend([esc, esc])
+    rows = conn.execute(
+        f"""
+        SELECT c.id, c.title, c.kind, c.updated_at,
+               (SELECT COUNT(*) FROM chat_messages m WHERE m.conv_id = c.id) AS msg_count,
+               (SELECT content FROM chat_messages m WHERE m.conv_id = c.id
+                 ORDER BY m.id DESC LIMIT 1) AS last_content
+        FROM conversations c
+        WHERE {' AND '.join(where)}
+        ORDER BY c.updated_at DESC
+        """,
+        params,
+    ).fetchall()
     return [dict(r) for r in rows]
 
 

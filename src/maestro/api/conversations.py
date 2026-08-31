@@ -11,11 +11,14 @@ router = APIRouter()
 
 
 @router.get("/api/conversations")
-def conversation_list(kind: str | None = None):
-    """会话列表（最近活跃倒序，带消息数/最后预览）；?kind=chat|task 只取某类。"""
+def conversation_list(kind: str | None = None, q: str | None = None):
+    """会话列表（最近活跃倒序，带消息数/最后预览）。
+
+    ?kind=chat|task 只取某类；?q=关键词 搜标题或消息内容。
+    """
     conn = db.init_db()
     try:
-        return {"conversations": db.list_conversations(conn, kind=kind)}
+        return {"conversations": db.list_conversations(conn, kind=kind, q=q)}
     finally:
         conn.close()
 
