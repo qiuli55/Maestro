@@ -435,6 +435,20 @@
       var data=localStorage.getItem("maestro_windows");
       if(!data)return;
       var state=JSON.parse(data);
+      // 过滤测试/异常遗留的假窗口：win_ 前缀或 merged_ 前缀 id 且 conv 不存在于后端时
+      // 仍会渲染空壳——这里按 title 白名单过滤明显的测试窗口
+      state=state.filter(function(s){
+        if(s.merged) return true;
+        var t=s.title||"";
+        var isTestLeftover=(t==="芙莉莲主题"||t==="空白窗口"||t==="回灌测试"||
+                            t==="窗口A"||t==="窗口B"||t==="Markdown测试"||
+                            t==="折叠测试"||t==="流式"||t==="任务卡"||
+                            t==="审批"||t==="完成"||t==="P"||t==="旅程"||
+                            t==="冒烟测试"||t==="运行视图验证"||
+                            /^win_\d+_/.test(s.id||""));
+        if(isTestLeftover)console.log("[restore] 跳过测试遗留窗口:",t);
+        return !isTestLeftover;
+      });
       if(!Array.isArray(state)||state.length===0)return;
       state.forEach(function(s){
         var pos=s.pos||s; // 兼容旧格式
