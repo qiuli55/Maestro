@@ -493,19 +493,3 @@
   .win-mini-kind{font-size:9px;color:#7a7aa8;text-align:center}
   .win-mini-drag{flex:1;cursor:grab}
   .win-mini-drag:active{cursor:grabbing}
-
-/* ============================================================================
- * 无障碍：prefers-reduced-motion——眩晕症/前庭障碍用户减少动画
- * （保留 opacity 过渡，去掉位移/旋转/缩放类动画）
- * ========================================================================== */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-  /* 视差与特效 canvas 停止（JS 端配合检测，见 app.js） */
-  #fx, #fx-bars { display: none !important; }
-}
-
