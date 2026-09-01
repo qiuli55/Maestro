@@ -1,0 +1,111 @@
+/* ============================================================================
+ * 芙莉莲主题配色（从立绘提取）
+ * 主色：绿眸/宝石薄荷绿 #82c7a7 / #5d9985
+ * 辅色：薰衣草紫发 #a4a3bf / #bfbbd1
+ * 底色：淡紫白 #e6e6f0（与壁纸一致）
+ * 点缀：羽毛红 #e24753（仅错误/失败态）
+ * ========================================================================== */
+:root{
+  --fr-green: #82c7a7;
+  --fr-green-deep: #5d9985;
+  --fr-green-soft: rgba(130, 199, 167, .18);
+  --fr-purple: #a4a3bf;
+  --fr-purple-soft: rgba(164, 163, 191, .16);
+  --fr-bg: #e6e6f0;
+  --fr-ink: #4a4a66;
+  --fr-red: #e24753;
+}
+
+/* ---- 全局强调色切换：按钮/选中态从蓝紫改薄荷绿 ---- */
+#dock-send, .win-send{ background: var(--fr-green-deep); }
+#dock-send:hover, .win-send:hover{ background: #4d8371; }
+.dock-tab.active, .dock-win-tab.active, .win-select-item.active,
+.cv-item.active{ background: var(--fr-green); color: #fff; }
+#dock-send, .win-send{ background: var(--fr-green-deep); }
+.chip-check, .agent-chip.selected{ border-color: var(--fr-green-deep); }
+.agent-chip.selected{ background: var(--fr-green-soft); }
+.agent-chip.selected .chip-check{ background: var(--fr-green-deep); border-color: var(--fr-green-deep); }
+.m-dot.running{ background: var(--fr-green); box-shadow: 0 0 10px var(--fr-green); }
+.m-dot.done{ background: var(--fr-green-deep); box-shadow: 0 0 10px var(--fr-green-deep); }
+.task-card .tc-status.running{ background: var(--fr-green-soft); color: #3d7a63; }
+.task-card .tc-status.done{ background: var(--fr-green-soft); color: var(--fr-green-deep); }
+.task-card .tc-bar i{ background: linear-gradient(90deg, var(--fr-green), var(--fr-green-deep)); }
+.task-card.done-card .tc-bar i{ background: var(--fr-green); }
+.task-card.done-card .tc-status{ color: var(--fr-green-deep); }
+.ap-approve{ background: var(--fr-green-deep) !important; }
+.ap-approve:hover{ background: #4d8371 !important; }
+.approval-card{ border-color: var(--fr-green); }
+.approval-card .tc-prompt{ color: var(--fr-green-deep); }
+.win.focused{ border-color: var(--fr-green) !important;
+  box-shadow: 0 8px 40px rgba(93,153,133,.35), 0 0 0 3px var(--fr-green-soft) !important; }
+.dock-win-tab.active{ background: var(--fr-green-deep); }
+.mw-tab.active{ border-bottom-color: rgba(232,230,240,.98); }
+#dock-send:hover, .win-send:hover{ background: #4d8371; }
+.win-select-item:hover, .cv-item:hover{ background: var(--fr-green-soft); }
+.wfb-btn{ background: var(--fr-green-deep); }
+.wfb-btn.ghost{ background: var(--fr-green-soft); color: var(--fr-green-deep); }
+.wc-ops button{ color: var(--fr-green-deep); }
+.skill-chip{ opacity: .92; }
+/* 时间分隔线与分隔装饰：紫发色 */
+.msg-divider{ background: var(--fr-purple-soft); color: #7a7a96; }
+/* 折叠渐变改回浅底 */
+.win-msg.folded .msg-content::after{ background: linear-gradient(transparent, #eceefc); }
+
+/* ---- 芙莉莲装饰元素（SVG data-uri，不依赖本地素材文件） ---- */
+
+/* 空窗口：右下角趴睡芙莉莲剪影（单色 SVG，随主题变色） */
+.win-body:has(.win-msgs:empty){
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 90'%3E%3Cg fill='%23bfbbd1' opacity='.45'%3E%3Cellipse cx='60' cy='72' rx='42' ry='9'/%3E%3Cpath d='M30 68 Q28 46 42 40 Q56 34 70 40 Q84 46 84 68 Z'/%3E%3Ccircle cx='36' cy='52' r='12'/%3E%3Ccircle cx='78' cy='52' r='12'/%3E%3Cpath d='M40 28 Q60 8 80 28 Q70 22 60 24 Q50 22 40 28'/%3E%3Cpath d='M76 16 Q82 6 88 14 Q84 12 82 18' stroke='%23bfbbd1' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/g%3E%3Cg fill='%235d9985' opacity='.6'%3E%3Ccircle cx='50' cy='50' r='2.2'/%3E%3Ccircle cx='68' cy='50' r='2.2'/%3E%3C/g%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 16px bottom 10px;
+  background-size: 96px auto;
+}
+
+/* 会话列表空态：同款剪影 + 绿色眼睛 */
+.cv-empty{ padding: 18px 12px 12px; text-align: center; }
+.cv-empty::before{
+  content: "";
+  display: block;
+  width: 84px; height: 63px;
+  margin: 0 auto 4px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 90'%3E%3Cg fill='%23bfbbd1' opacity='.55'%3E%3Cellipse cx='60' cy='72' rx='42' ry='9'/%3E%3Cpath d='M30 68 Q28 46 42 40 Q56 34 70 40 Q84 46 84 68 Z'/%3E%3Ccircle cx='36' cy='52' r='12'/%3E%3Ccircle cx='78' cy='52' r='12'/%3E%3Cpath d='M40 28 Q60 8 80 28 Q70 22 60 24 Q50 22 40 28'/%3E%3C/g%3E%3Cg fill='%235d9985'%3E%3Ccircle cx='50' cy='50' r='3'/%3E%3Ccircle cx='68' cy='50' r='3'/%3E%3C/g%3E%3C/svg%3E") center/contain no-repeat;
+}
+.cv-empty{ font-size: 0; } /* 隐藏原文本，让 ::after 接管 */
+.cv-empty::after{
+  content: "芙莉莲在等第一条消息…";
+  display: block;
+  font-size: 11.5px;
+  color: #9a9ab8;
+}
+
+/* 顶部品牌卡头像：SVG 圆环 + 绿眸（呼吸动画） */
+#maestro .m-head::before{
+  content: "";
+  display: inline-block;
+  width: 22px; height: 22px;
+  margin-right: 6px;
+  vertical-align: -6px;
+  border-radius: 50%;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23e6e6f0' stroke='%235d9985' stroke-width='2'/%3E%3Cpath d='M8 12 Q16 4 24 12 Q16 9 8 12' fill='%23a4a3bf'/%3E%3Ccircle cx='12' cy='17' r='2.4' fill='%235d9985'/%3E%3Ccircle cx='20' cy='17' r='2.4' fill='%235d9985'/%3E%3Cpath d='M13 23 Q16 25 19 23' stroke='%23a4a3bf' stroke-width='1.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat;
+  animation: frieren-breathe 3.6s ease-in-out infinite;
+}
+@keyframes frieren-breathe{ 0%,100%{ transform: scale(1); } 50%{ transform: scale(1.07); } }
+
+/* 任务卡完成态：右下角绿色小勾 + 趴睡剪影水印 */
+.task-card.done-card .tc-result::after{
+  content: "";
+  position: absolute;
+  right: 6px; bottom: 4px;
+  width: 36px; height: 27px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 90'%3E%3Cg fill='%2382c7a7' opacity='.5'%3E%3Cellipse cx='60' cy='72' rx='42' ry='9'/%3E%3Cpath d='M30 68 Q28 46 42 40 Q56 34 70 40 Q84 46 84 68 Z'/%3E%3Ccircle cx='36' cy='52' r='12'/%3E%3Ccircle cx='78' cy='52' r='12'/%3E%3C/g%3E%3Cg stroke='%235d9985' stroke-width='4' fill='none' stroke-linecap='round'%3E%3Cpath d='M50 52 L58 60 L74 44'/%3E%3C/g%3E%3C/svg%3E") center/contain no-repeat;
+  pointer-events: none;
+}
+.task-card.done-card .tc-result{ position: relative; }
+
+/* 暗色模式：同一套绿色主色，面板底色换深色（绿在暗底上更亮） */
+@media (prefers-color-scheme: dark){
+  :root{ --fr-bg: #22263e; --fr-ink: #d5daf0; }
+  .win-body:has(.win-msgs:empty){
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 90'%3E%3Cg fill='%235d5a80' opacity='.5'%3E%3Cellipse cx='60' cy='72' rx='42' ry='9'/%3E%3Cpath d='M30 68 Q28 46 42 40 Q56 34 70 40 Q84 46 84 68 Z'/%3E%3Ccircle cx='36' cy='52' r='12'/%3E%3Ccircle cx='78' cy='52' r='12'/%3E%3Cpath d='M40 28 Q60 8 80 28 Q70 22 60 24 Q50 22 40 28'/%3E%3C/g%3E%3Cg fill='%2382c7a7' opacity='.7'%3E%3Ccircle cx='50' cy='50' r='2.2'/%3E%3Ccircle cx='68' cy='50' r='2.2'/%3E%3C/g%3E%3C/svg%3E");
+  }
+}

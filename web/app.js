@@ -499,7 +499,7 @@
 
   // ========== 消息渲染引擎：Markdown / 头像 / 时间分隔 / 操作按钮 ==========
   var MD_FOLD_LEN = 1400;          // 超过该长度折叠"展开全文"
-  var AVATAR_HTML = '<img class="msg-avatar" src="pet_frieren_q.png" alt="">';
+  var AVATAR_HTML = '<img class="msg-avatar" src="pet_frieren_q.png" alt="芙莉莲头像">';
 
   // 行内 Markdown（先转义再替换，天然防注入）
   function mdInline(raw) {
@@ -1411,7 +1411,7 @@
         var newLabel=kind==="task"?"＋ 新建任务对话":"＋ 新建对话";
         convListEl.innerHTML='<div class="cv-search"><input id="cv-search" placeholder="搜索标题或消息内容…" value="'+escapeHtml(convSearchQ)+'" /></div>'+
           '<div class="cv-new" id="cv-new">'+newLabel+'</div>'+
-          (list.map(renderConvItem).join("")||('<div class="cv-empty">'+(convSearchQ?"无匹配会话":"暂无会话")+'</div>'));
+          (list.map(renderConvItem).join("")||('<div class="cv-empty">'+(convSearchQ?"没有匹配的对话":"芙莉莲在等第一条消息…")+'</div>'));
         bindConvSearch();
         return list;
       })
