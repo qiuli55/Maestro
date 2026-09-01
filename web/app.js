@@ -2399,7 +2399,8 @@
       selectedWinId,updateDockPlaceholder,winAppendTaskCard,renderTaskCard,
       pollTaskCard,showApprovalCard,backfillAllHistories,loadConvs,loadWorkflows,
       mergeWindows,wfOpen,winSelectRender,winCreate,winAppendMsg,
-      showTyping,hideTyping,mdRender,newWin,winCreateFromConv,connectEvtWs
+      showTyping,hideTyping,mdRender,newWin,winCreateFromConv,connectEvtWs,
+      applyFold,doSend,toggleList
     };
   })();
 })();

@@ -174,11 +174,15 @@ def test_chat_long_message_folded(browser_page):
     assert not errs
 
 
-@pytest.mark.skip(reason='stub fetch 替换 + 150ms 内检测 typing 太紧（event loop 时序 flake）；后端真流式或更宽超时后重测')
 def test_chat_typing_indicator_and_completion(browser_page):
-    """发消息后打字指示出现；流式完成 typing 消失；回复含发送内容。"""
+    """发消息 → typing 出现 → 流式完成 typing 消失 → 回复含发送内容。
+
+    stub 的 SSE 一次性返回完整帧（无网络延迟），typing 存在时间可能 <150ms——
+    所以在 stub 里记录 pump 前后状态，验证完整生命周期而非定时截图。
+    """
     page, errs = browser_page
     page.evaluate("""() => {
+      window.__typingSeen = false;
       const orig = window.fetch;
       window.fetch = function(url, opts){
         if(String(url).includes("/api/chat/stream")){
@@ -186,8 +190,14 @@ def test_chat_typing_indicator_and_completion(browser_page):
           const NL = String.fromCharCode(10);
           const frame = "data: " + JSON.stringify({delta: "echo:" + body.message}) + NL + NL +
                         "data: " + JSON.stringify({done: true, reply: "echo:" + body.message}) + NL + NL;
-          return Promise.resolve(new Response(frame,
-            {status: 200, headers: {"Content-Type": "text/event-stream"}}));
+          // 用微任务延迟一帧，让 pump 的第一帧前 typing 气泡有入列机会
+          return new Promise(resolve => {
+            setTimeout(() => {
+              window.__typingSeen = !!document.querySelector('.win-msg.typing');
+              resolve(new Response(frame,
+                {status: 200, headers: {"Content-Type": "text/event-stream"}}));
+            }, 120);
+          });
         }
         return orig.apply(this, arguments);
       };
@@ -197,15 +207,24 @@ def test_chat_typing_indicator_and_completion(browser_page):
     page.evaluate("window.__e2e__.selectedWinId = 'm3'; window.__e2e__.updateDockPlaceholder();")
     page.fill("#dock-input", "ping")
     page.click("#dock-send")
-    page.wait_for_timeout(150)
-    assert page.locator('.win-msgs[data-conv="m3"] .win-msg.typing').count() == 1
-    page.wait_for_timeout(1500)
+    # 此时 fetch 还在 120ms 延迟里，typing 气泡应已入列
+    page.wait_for_timeout(60)
+    assert page.locator('.win-msgs[data-conv="m3"] .win-msg.typing').count() == 1, \
+        "发消息后应立即出现 typing 气泡"
+    page.wait_for_timeout(1800)
+    # 流式完成：typing 消失 + 回复渲染
     assert page.locator('.win-msgs[data-conv="m3"] .win-msg.typing').count() == 0
     last = page.evaluate("""() => {
       const a = document.querySelectorAll('.win-msgs[data-conv="m3"] .win-msg.assistant');
       return a.length ? a[a.length-1].textContent : '';
     }""")
     assert "echo:ping" in last
+    assert window_typing_seen(page), "stub 记录的 typing 状态应为 true"
+    assert not errs
+
+
+def window_typing_seen(page):
+    return page.evaluate("window.__typingSeen === true")
     assert not errs
 
 
@@ -299,7 +318,6 @@ def test_task_card_progress_via_renderTaskCard(browser_page):
     assert not errs
 
 
-@pytest.mark.skip(reason='renderTaskCard 调 applyFold（IIFE 内部），未在 __e2e__ 暴露——需补 applyFold 后重测')
 def test_task_card_final_state_done_shows_output(browser_page):
     """DONE 状态：结果区显示、含复制按钮、长结果折叠。"""
     page, errs = browser_page
@@ -318,16 +336,20 @@ def test_task_card_final_state_done_shows_output(browser_page):
     expect(card.locator(".tc-status")).to_have_text("已完成")
     expect(card).to_have_class("task-card done-card")
     result = card.locator(".tc-result")
-    expect(result).to_have_class("show clamped")
+    result_class = result.get_attribute("class") or ""
+    assert "show" in result_class.split() and "clamped" in result_class.split(),         f"结果区应有 show clamped 类，实得: {result_class!r}"
     assert result.inner_text().startswith("最终结果")
     assert page.locator('.tc-result-toggle:has-text("展开全文")').count() == 1
     assert not errs
 
 
-@pytest.mark.skip(reason='.ap-approve 点击的 fetch 拦截在沙箱里有变量作用域问题；应改用 page.route 替代 evaluate fetch')
-def test_approval_card_renders_with_approve(browser_page):
+def test_approval_card_renders_with_approve(browser_page, server):
     """showApprovalCard 渲染卡片：含 cmd + 批准/拒绝按钮；点批准后状态变"已批准"。"""
     page, errs = browser_page
+    # 用 page.route 拦截审批接口（比 evaluate 内替换 fetch 稳定，无沙箱作用域问题）
+    page.route("**/api/tasks/*/approvals/*", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body='{"ok":true,"approval_id":"ap_e2e_1","decision":"approved"}'))
     page.evaluate("""() => {
       window.__e2e__.winCreate('ap1', '审批', 'chat');
       window.__e2e__.showApprovalCard({
@@ -345,19 +367,11 @@ def test_approval_card_renders_with_approve(browser_page):
     expect(card.locator("code")).to_contain_text("rm -rf /tmp/test")
     assert card.locator(".ap-approve:has-text('批准执行')").count() == 1
     assert card.locator(".ap-reject:has-text('拒绝')").count() == 1
-    page.evaluate("""() => {
-      const orig = window.fetch;
-      window.fetch = function(url, opts){
-        if(String(url).includes('/approvals/')){
-          return Promise.resolve(new Response('{"ok":true}', {status:200, headers:{'Content-Type':'application/json'}}));
-        }
-        return orig.apply(this, arguments);
-      };
-    }""")
-    page.click(".ap-approve")
-    page.wait_for_timeout(400)
+    card.locator(".ap-approve").click()
+    page.wait_for_timeout(500)
     expect(card.locator(".tc-status")).to_have_text("已批准")
-    assert page.locator(".tc-approve-row").count() == 0
+    # 按钮行被隐藏（display:none）
+    assert not card.locator(".tc-approve-row").is_visible()
     assert not errs
 
 
@@ -456,12 +470,14 @@ def test_conversation_list_loads_via_loadConvs(browser_page):
     assert not errs
 
 
-@pytest.mark.skip(reason='会话列表由 CSS :hover 触发，自动化难——应改用 page.hover 触发')
 def test_conversation_search_filter(browser_page):
     """搜索框：输入不匹配关键词 → 列表清空；Esc 恢复。"""
     page, errs = browser_page
     page.evaluate("window.__e2e__.loadConvs('chat')")
     page.wait_for_timeout(500)
+    # 会话列表默认 display:none，靠 .conv-wrap:hover 展开——用 hover 触发
+    page.hover("#history-btn")
+    page.wait_for_timeout(300)
     before = page.locator("#conv-list .cv-item").count()
     if before == 0:
         pytest.skip("无会话可搜（CI 隔离 DB 干净）")
@@ -479,16 +495,41 @@ def test_conversation_search_filter(browser_page):
 # 时钟
 # ============================================================================
 
-@pytest.mark.skip(reason='.txt 元素内容是日期非时钟；查找时钟需用更具体选择器')
 def test_clock_updates_after_2s(browser_page):
-    """时钟元素存在时，2.5s 后文本与初始不同（秒级更新）。"""
+    """时钟元素（HH:MM 格式的 .txt）2.5s 后应更新（分钟可能不变但秒级重渲染一定发生）。
+
+    页面有多个 .txt：时钟 HH:MM / 日期 YYYY/MM/DD / 'Fri' 静态文本。
+    用正则挑出 HH:MM 格式的那个；2.5s 后分钟可能不变（如 18:31→18:31），
+    但至少要验证 tickClock 每 1s 在跑——通过对比两次 innerText 抓取时间戳。
+    """
     page, errs = browser_page
-    t1 = page.evaluate("() => { const e = document.querySelector('.txt'); return e ? e.textContent : null; }")
-    if not t1:
-        pytest.skip("无 .txt 时钟元素")
-    page.wait_for_timeout(2500)
-    t2 = page.evaluate("() => document.querySelector('.txt').textContent")
-    assert t1 != t2, f"时钟未更新: {t1!r} == {t2!r}"
+    # 找 HH:MM 格式的时钟元素
+    clock_text = page.evaluate("""() => {
+      const els = Array.from(document.querySelectorAll('.txt'));
+      const clock = els.find(e => /^\\d{2}:\\d{2}$/.test(e.textContent.trim()));
+      return clock ? clock.textContent.trim() : null;
+    }""")
+    if not clock_text:
+        pytest.skip("无 HH:MM 时钟元素")
+    # 验证格式合法
+    import re
+    assert re.match(r"^\d{2}:\d{2}$", clock_text), f"时钟格式异常: {clock_text!r}"
+    # tickClock 每 1s 跑一次；等 65s 跨分钟边界太慢——改为验证
+    # 秒级重渲染确实发生（textContent 节点被替换为相同值也算跑过）。
+    # 用 MutationObserver 抓 tickClock 的写入事件：
+    observed = page.evaluate("""() => new Promise(resolve => {
+      const els = Array.from(document.querySelectorAll('.txt'));
+      const clock = els.find(e => /^\\d{2}:\\d{2}$/.test(e.textContent.trim()));
+      if (!clock) { resolve(null); return; }
+      const obs = new MutationObserver(muts => {
+        resolve({mutations: muts.length, now: clock.textContent.trim()});
+        obs.disconnect();
+      });
+      obs.observe(clock, {childList: true, characterData: true, subtree: true});
+      setTimeout(() => resolve({mutations: 0, now: clock.textContent.trim()}), 3000);
+    })""")
+    assert observed and observed["mutations"] > 0, f"tickClock 未在 3s 内更新时钟: {observed}"
+    assert re.match(r"^\d{2}:\d{2}$", observed["now"]), f"更新后格式异常: {observed}"
     assert not errs
 
 
