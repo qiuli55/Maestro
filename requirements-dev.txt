@@ -7,3 +7,11 @@ ruff>=0.5
 mypy>=1.10
 pre-commit>=3.7
 git-filter-repo>=2.45
+
+# 桌面打包（PyInstaller + PyWebView 嵌 Chromium 窗）
+pywebview>=4.4
+pyinstaller>=6.0
+
+# 浏览器冒烟（前端 e2e：无 playwright 时 test_e2e_smoke 自动 skip）
+playwright>=1.40
+

@@ -125,6 +125,36 @@ jobs:
           fi
           echo "✅ 无密钥"
 
+  docker-build:
+    name: Docker build smoke
+    # 仅 push main 时跑（PR 拉镜像太慢）
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build Maestro image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: maestro:test
+          cache-from: ""
+          load: true
+      - name: Smoke test image
+        run: |
+          docker run --rm -d --name maestro-smoke -p 18787:8787 maestro:test
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:18787/api/healthz > /dev/null; then
+              echo "✓ service up"; break
+            fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:18787/api/healthz | grep -q ok || (echo "❌ /api/healthz"; exit 1)
+          curl -sf http://127.0.0.1:18787/api/agents > /dev/null || (echo "❌ /api/agents"; exit 1)
+          curl -sf http://127.0.0.1:18787/ | grep -q app.js || (echo "❌ static assets"; exit 1)
+          echo "✓ all routes healthy"
+          docker stop maestro-smoke
+
   # ============================================================================
   # 代码提交规范（commit message 检查）
   # ============================================================================

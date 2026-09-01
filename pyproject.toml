@@ -39,6 +39,9 @@ dev = [
     "mypy>=1.10",
     "pre-commit>=3.7",
     "git-filter-repo>=2.45",
+    "pywebview>=4.4",       # 桌面版启动器（嵌系统 Chromium）
+    "pyinstaller>=6.0",     # 桌面版打包
+    "playwright>=1.40",     # 前端浏览器冒烟（e2e 测试无 playwright 自动 skip）
 ]
 
 [project.urls]
