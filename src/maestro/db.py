@@ -566,15 +566,25 @@ def add_chat_message(conn: sqlite3.Connection, role: str, content: str, conv_id:
     return cur.lastrowid
 
 
-def get_chat_history(conn: sqlite3.Connection, limit: int = 20, conv_id: str | None = None) -> list[dict]:
-    """取某会话最近 limit 条闲聊（时间正序）。conv_id=None 返回全部（兼容）。"""
-    if conv_id is None:
-        rows = conn.execute("SELECT * FROM chat_messages ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM chat_messages WHERE conv_id=? ORDER BY id DESC LIMIT ?",
-            (conv_id, limit),
-        ).fetchall()
+def get_chat_history(conn: sqlite3.Connection, limit: int = 20,
+                       conv_id: str | None = None,
+                       since_id: int | None = None) -> list[dict]:
+    """取某会话最近 limit 条闲聊（时间正序）。
+
+    since_id: 增量同步——只返回 id > since_id 的消息（前端轮询/拉流用）。
+    conv_id=None 返回全部（兼容）。
+    """
+    where = ["1=1"]
+    params: list = []
+    if conv_id is not None:
+        where.append("conv_id=?")
+        params.append(conv_id)
+    if since_id is not None:
+        where.append("id>?")
+        params.append(since_id)
+    sql = "SELECT * FROM chat_messages WHERE " + " AND ".join(where) + " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in reversed(rows)]
 
 

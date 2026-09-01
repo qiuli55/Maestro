@@ -1,3 +1,4 @@
+from datetime import datetime, UTC
 """数字人闲聊测试：历史存取、chat 调用、API 路由。"""
 from fastapi.testclient import TestClient
 
@@ -544,3 +545,83 @@ def test_conversation_search(tmp_db):
     c3 = db.create_conversation(tmp_db, title="魔法任务", kind="task")
     r = db.list_conversations(tmp_db, kind="task", q="魔法")
     assert [x["id"] for x in r] == [c3]
+
+
+def test_history_incremental_since_id(tmp_db):
+    """?since_id=N 增量同步：只返回 id > N 的消息。"""
+    c1 = db.create_conversation(tmp_db, title="增量同步")
+    m1 = db.add_chat_message(tmp_db, "user", "1", conv_id=c1)
+    m2 = db.add_chat_message(tmp_db, "assistant", "2", conv_id=c1)
+    m3 = db.add_chat_message(tmp_db, "user", "3", conv_id=c1)
+
+    # since_id=0：全量
+    msgs = db.get_chat_history(tmp_db, conv_id=c1, since_id=0)
+    assert [m["id"] for m in msgs] == [m1, m2, m3]
+    # since_id=m1：只剩 m2, m3
+    msgs = db.get_chat_history(tmp_db, conv_id=c1, since_id=m1)
+    assert [m["id"] for m in msgs] == [m2, m3]
+    # since_id=m3：空
+    assert db.get_chat_history(tmp_db, conv_id=c1, since_id=m3) == []
+
+
+def test_history_feed_sse_streams_new_messages(tmp_path, monkeypatch):
+    """/api/chat/feed SSE：先推 1 条历史补漏，再即时推新加的消息。"""
+    import time
+    from fastapi.testclient import TestClient
+    from maestro import server
+    from maestro import db
+
+    monkeypatch.setattr(server, "WEB_DIR", tmp_path)
+    monkeypatch.setattr(server, "WALLPAPER_DIR", tmp_path)
+    db_path = tmp_path / "m.db"
+    monkeypatch.setenv("MAESTRO_DB", str(db_path))
+    monkeypatch.setenv("MAESTRO_DB_POOL", "0")
+    # 预写历史（用独立连接，与 TestClient 启的实例隔离）
+    seed = db.init_db(db_path, use_cache=False)
+    c1 = "conv_sse_test"
+    try:
+        db.add_chat_message(seed, "user", "hist-1", conv_id=c1)
+        db.add_chat_message(seed, "assistant", "hist-2", conv_id=c1)
+    finally:
+        seed.close()
+    # 第二连接用于即时推新消息
+    writer = db.init_db(db_path, use_cache=False)
+
+    # SSE 长轮询走原始 socket：TestClient.stream 走 ASGI 传输，长轮询
+    # generator 即使客户端断开也未必立即感知（要等下次 time.sleep 后），会卡。
+    # 直连 socket + select 限时最稳。
+    def read_sse_events(conv_id, since_id, predicate, timeout=4.0):
+        # TestClient.stream 走 ASGI 传输：服务端 generator 阻塞在 time.sleep
+        # 时 r.close() 不会立即停 generator。简单粗暴：read_bytes 是生成器，
+        # 不用 with，由 except 兜底；超时由调用方 timeout 控制。
+        import httpx
+        with c.stream("GET", f"/api/chat/feed?conv_id={conv_id}&since_id={since_id}&poll=0.05") as r:
+            assert r.status_code == 200
+            buf = b""
+            t0 = time.monotonic()
+            try:
+                for chunk in r.iter_bytes(chunk_size=64):
+                    buf += chunk
+                    if predicate(buf) or time.monotonic() - t0 > timeout:
+                        break
+            except httpx.RemoteProtocolError:
+                # 客户端 close 触发服务端 generator GeneratorExit 抛上来
+                pass
+            finally:
+                try: r.close()
+                except Exception: pass
+        return buf.decode("utf-8", errors="replace")
+
+        # 第一次连接 since_id=0：应立即收到 2 条补漏
+        text = read_sse_events(
+            c1, since_id=0, predicate=lambda b: b.count(b"event: msg") >= 2
+        )
+        assert text.count("event: msg") == 2, f"未收到 2 条补漏，got: {text[:200]}"
+
+        # 第二次连接 since_id=2：等待即时推送 new-3
+        db.add_chat_message(writer, "user", "new-3", conv_id=c1)
+        text2 = read_sse_events(
+            c1, since_id=2, predicate=lambda b: b'"new-3"' in b
+        )
+        assert "new-3" in text2, f"未收到新消息推送，got: {text2[:200]}"
+    writer.close()

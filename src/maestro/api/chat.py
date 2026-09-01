@@ -96,13 +96,76 @@ def chat_message_stream(payload: dict, background: BackgroundTasks):
 
 
 @router.get("/api/chat/history")
-def chat_history(limit: int = 20, conv_id: str | None = None):
-    """取某会话最近闲聊记录（时间正序）；conv_id 缺省返回全部。"""
+def chat_history(limit: int = 20, conv_id: str | None = None, since_id: int | None = None):
+    """取某会话最近闲聊记录（时间正序）。
+
+    ?since_id=N 增量同步：只返回 id > N 的消息（前端轮询/补漏用）。
+    conv_id 缺省返回全部。
+    """
     conn = db.init_db()
     try:
-        return {"messages": db.get_chat_history(conn, limit=limit, conv_id=conv_id)}
+        return {"messages": db.get_chat_history(conn, limit=limit, conv_id=conv_id, since_id=since_id)}
     finally:
         conn.close()
+
+
+@router.get("/api/chat/feed")
+def chat_feed(conv_id: str, since_id: int = 0, poll: float = 1.0):
+    """增量 SSE 长轮询：客户端 EventSource 订阅，服务器发现 id > since_id
+    的新消息就推一行，60s 主动 ping 保持连接；客户端断线后用 since_id 重连。
+
+    比前端 1.5s 轮询 /api/chat/history 减少 ~90% 请求；WS 路径已存在但只推
+    kind=chat/task/approval，缺"未推前"的历史回填场景——这条专门服务补漏。
+    """
+    import json
+    import time as _time
+    from fastapi.responses import StreamingResponse
+
+    if poll < 0.1 or poll > 10:
+        poll = 1.0
+    if since_id < 0:
+        since_id = 0
+
+    def gen():
+        last_id = since_id
+        last_ping = _time.monotonic()
+        # 拉一次"立即"补漏（since_id 之后所有消息），再进入轮询
+        conn = db.init_db()
+        try:
+            rows = db.get_chat_history(conn, limit=200, conv_id=conv_id, since_id=last_id)
+            for r in rows:
+                payload = json.dumps({"id": r["id"], "role": r["role"], "content": r["content"],
+                                      "created_at": r["created_at"]}, ensure_ascii=False)
+                yield f"event: msg\ndata: {payload}\n\n"
+                last_id = max(last_id, r["id"])
+        finally:
+            conn.close()
+        # 长轮询：每秒查一次，每次最多发新批
+        idle_ticks = 0
+        while idle_ticks < 60 * 10:  # 10 分钟内无活动则关闭（防僵尸）
+            conn = db.init_db()
+            try:
+                rows = db.get_chat_history(conn, limit=50, conv_id=conv_id, since_id=last_id)
+            finally:
+                conn.close()
+            if rows:
+                for r in rows:
+                    payload = json.dumps({"id": r["id"], "role": r["role"], "content": r["content"],
+                                          "created_at": r["created_at"]}, ensure_ascii=False)
+                    yield f"event: msg\ndata: {payload}\n\n"
+                    last_id = max(last_id, r["id"])
+                idle_ticks = 0
+            else:
+                idle_ticks += 1
+            # 每 30s 主动 ping 一次（防中间代理/反代超时）
+            now = _time.monotonic()
+            if now - last_ping > 30:
+                yield ": ping\n\n"
+                last_ping = now
+            _time.sleep(poll)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.get("/api/chat/profile")
