@@ -2393,5 +2393,13 @@
 
     // 页面加载后连接 WebSocket
     setTimeout(connectWS,1000);
+    // e2e 测试钩子：把 IIFE 内部需要被 Playwright 测试调用的函数暴露到 window
+    // （非测试路径无副作用——只多一个对象引用）
+    window.__e2e__={
+      selectedWinId,updateDockPlaceholder,winAppendTaskCard,renderTaskCard,
+      pollTaskCard,showApprovalCard,backfillAllHistories,loadConvs,loadWorkflows,
+      mergeWindows,wfOpen,winSelectRender,winCreate,winAppendMsg,
+      showTyping,hideTyping,mdRender,newWin,winCreateFromConv,connectEvtWs
+    };
   })();
 })();
