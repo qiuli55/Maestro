@@ -25,7 +25,7 @@ import urllib.request
 from pathlib import Path
 
 from . import runtime
-from .runtime import project_root, user_data_dir
+from .runtime import user_data_dir  # project_root via runtime.project_root() (monkeypatch-friendly)
 
 
 def _port_free(port: int) -> bool:
@@ -89,7 +89,7 @@ def _spawn_server(port: int) -> subprocess.Popen:
     env["MAESTRO_PORT"] = str(port)
     env["MAESTRO_HOST"] = "127.0.0.1"
     # MAESTRO_HOME：让后端知道产物根（已写 DB / outputs / backups）
-    env.setdefault("MAESTRO_HOME", str(project_root()))
+    env.setdefault("MAESTRO_HOME", str(runtime.project_root()))
     # PATH 透传
     # cwd=src/maestro：让 -m maestro.server 能解析 maestro 包
     # （launcher 在 src/maestro/launcher.py，parents[0] 就是 src/maestro/）
@@ -174,7 +174,7 @@ def run() -> int:
         return 0
 
     # 3a) 主窗口：1400x900 起步，可缩，关闭不退出 launcher（壁纸层仍在跑）
-    _icon = str(project_root() / "packaging" / "maestro.ico")
+    _icon = str(runtime.project_root() / "packaging" / "maestro.ico")
     if not Path(_icon).exists():
         _icon = str(Path(__file__).resolve().parents[2] / "web" / "favicon.ico")
 

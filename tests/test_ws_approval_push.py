@@ -49,7 +49,8 @@ def test_approval_push_e2e(tmp_path, monkeypatch):
     try:
         import socket
         ready = False
-        for _ in range(40):
+        # Windows 上 uvicorn 启动 + pydantic 初始化可能 10-30s（cold import）
+        for _ in range(120):
             try:
                 s = socket.socket(); s.settimeout(1)
                 s.connect(("127.0.0.1", 8766))
@@ -58,7 +59,7 @@ def test_approval_push_e2e(tmp_path, monkeypatch):
                 s.close()
                 if ready: break
             except Exception:
-                time.sleep(0.25)
+                time.sleep(0.5)
         assert ready, "服务未启动"
 
         ws, received, reader_t = _collect_ws_msgs("127.0.0.1:8766")

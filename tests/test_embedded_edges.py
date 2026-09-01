@@ -12,6 +12,13 @@ from unittest.mock import patch
 
 import pytest
 
+
+def _ensure(path):
+    """_resolve_output_dir 桩助手：返回目录路径并按需建。"""
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 from maestro.workers import embedded
 
 
@@ -28,7 +35,7 @@ def test_write_file_rejects_path_traversal(tmp_path):
 
     for bad in ["../etc/passwd", "..\\windows\\system32", "/etc/passwd",
                 "C:\\Windows\\evil.txt", "subdir/file.txt"]:
-        with patch.object(embedded, "OUTPUT_DIR", tmp_path / "outputs"):
+        with patch.object(embedded, "_resolve_output_dir", lambda: _ensure(tmp_path / "outputs")):
             result = fn("write_file", {"filename": bad, "content": "x"})
         assert "[write_file] 错误" in result, f"应拒绝 {bad!r}, 实际: {result!r}"
 
@@ -40,7 +47,7 @@ def test_write_file_accepts_simple_filename(tmp_path):
     fn = _executor_for_test(str(workdir))
 
     out_dir = tmp_path / "outputs"
-    with patch.object(embedded, "OUTPUT_DIR", out_dir):
+    with patch.object(embedded, "_resolve_output_dir", lambda: _ensure(out_dir)):
         result = fn("write_file", {"filename": "hello.py", "content": "print('hi')"})
 
     assert "[write_file] 成功" in result
@@ -81,7 +88,7 @@ def test_list_files_empty_directory(tmp_path):
     empty.mkdir()
     fn = _executor_for_test(str(tmp_path))
 
-    with patch.object(embedded, "OUTPUT_DIR", empty):
+    with patch.object(embedded, "_resolve_output_dir", lambda: _ensure(empty)):
         result = fn("list_files", {})
 
     assert "空" in result
