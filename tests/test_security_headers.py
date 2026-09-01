@@ -66,3 +66,39 @@ def test_metrics_whitelisted_with_api_key(tmp_path, monkeypatch):
         assert c.get("/api/healthz").status_code == 200  # 同级白名单
         # 带错误 key：业务端点应 403
         assert c.get("/api/tasks", headers={"X-API-Key": "wrong"}).status_code == 403
+
+
+def test_permissions_policy_on_html(client):
+    """/（HTML）含 Permissions-Policy 关闭强大 API。"""
+    r = client.get("/")
+    pp = r.headers.get("Permissions-Policy", "")
+    assert "camera=()" in pp, "camera 应被禁用"
+    assert "microphone=()" in pp, "microphone 应被禁用"
+    assert "geolocation=()" in pp, "geolocation 应被禁用"
+    assert "fullscreen=(self)" in pp, "fullscreen 仅同源允许"
+
+
+def test_permissions_policy_on_metrics(client):
+    """/metrics（文本）也注入 Permissions-Policy（统一响应头，不按路由分支）。"""
+    r = client.get("/metrics")
+    assert "Permissions-Policy" in r.headers
+
+
+def test_csp_stricter_on_html(client):
+    """/（HTML）CSP 含收紧项：object-src 'none'、font-src、upgrade-insecure-requests。"""
+    r = client.get("/")
+    csp = r.headers.get("Content-Security-Policy", "")
+    assert "object-src 'none'" in csp, "应封禁插件/Flash/旧 ActiveX"
+    assert "font-src 'self' data:" in csp, "应限制字体来源"
+    assert "upgrade-insecure-requests" in csp, "应升级 http→https"
+    assert "default-src 'self'" in csp
+    assert "frame-ancestors 'none'" in csp, "应替代 X-Frame-Options 禁止 iframe 嵌入"
+
+
+def test_csp_not_on_text_event_stream(client):
+    """/api/chat/feed（text/event-stream）不注入 CSP（流式响应污染 CSP 会断浏览器解析）。"""
+    with client.stream("GET", "/api/chat/feed?conv_id=conv_x&since_id=0&poll=0.1") as r:
+        try:
+            assert "Content-Security-Policy" not in r.headers
+        finally:
+            r.close()

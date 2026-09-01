@@ -156,6 +156,25 @@ jobs:
           docker stop maestro-smoke
 
   # ============================================================================
+  # Workflow 自检：actionlint 在合并前就挡掉 ci.yml 自身的语法错误
+  # ============================================================================
+  actionlint:
+    name: Actionlint (workflow self-check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download actionlint
+        id: get_actionlint
+        run: |
+          mkdir -p .actionlint
+          curl -sSL -o .actionlint/actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+          tar -xzf .actionlint/actionlint.tar.gz -C .actionlint
+          echo "executable=$(pwd)/.actionlint/actionlint" >> $GITHUB_OUTPUT
+      - name: Run actionlint
+        run: ${{ steps.get_actionlint.outputs.executable }} -color
+
+  # ============================================================================
   # 代码提交规范（commit message 检查）
   # ============================================================================
   commit-lint:

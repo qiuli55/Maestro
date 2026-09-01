@@ -165,20 +165,37 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Referrer-Policy"] = "no-referrer"
+        # Permissions-Policy：关闭不需用到的强大 API（浏览器原生权限管理，比
+        # 依赖每个脚本自觉更稳）。Geolocation/camera/mic/USB/etc. 全关
+        # （桌面本地服务用不到；自托管场景如有需要再开）。
+        resp.headers["Permissions-Policy"] = (
+            "accelerometer=(), ambient-light-sensor=(), autoplay=(), battery=(), "
+            "camera=(), display-capture=(), document-domain=(), encrypted-media=(), "
+            "execution-while-not-rendered=(), execution-while-out-of-viewport=(), "
+            "fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), "
+            "microphone=(), midi=(), payment=(), picture-in-picture=(), "
+            "publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), "
+            "usb=(), web-share=(), xr-spatial-tracking=()"
+        )
         # CSP：仅对 HTML 响应注入（静态/JSON/流式跳过，避免污染 text/event-stream）
         ctype = resp.headers.get("Content-Type", "")
         if (resp.headers.get("Content-Type", "").startswith("text/html") or
                 (request.url.path == "/" and not resp.headers.get("Content-Type"))):
             # 内联样式不可避免（pet_q 视差 + 一些 UI 微样式）；script 全部走 app.js
+            # 'unsafe-inline' 仅在 style 允许；object-src 'none' 防插件注入；
+            # frame-ancestors 'none' 替代 X-Frame-Options（DUAL 防御）。
             resp.headers["Content-Security-Policy"] = (
                 "default-src 'self'; "
                 "img-src 'self' data: blob:; "
                 "style-src 'self' 'unsafe-inline'; "
                 "script-src 'self'; "
                 "connect-src 'self' ws: wss:; "
-                "frame-ancestors 'none'; "
+                "font-src 'self' data:; "
+                "object-src 'none'; "
                 "base-uri 'self'; "
-                "form-action 'self'"
+                "form-action 'self'; "
+                "frame-ancestors 'none'; "
+                "upgrade-insecure-requests"
             )
         return resp
 
