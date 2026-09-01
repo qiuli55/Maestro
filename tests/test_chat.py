@@ -625,3 +625,69 @@ def test_history_feed_sse_streams_new_messages(tmp_path, monkeypatch):
         )
         assert "new-3" in text2, f"未收到新消息推送，got: {text2[:200]}"
     writer.close()
+
+def test_model_router_picks_chat_default(monkeypatch):
+    """默认/无关键词 → chat。"""
+    from maestro import model_router
+    monkeypatch.delenv("MAESTRO_MODEL", raising=False)
+    assert model_router.route("你好") == "deepseek:deepseek-chat"
+    assert model_router.route("讲个笑话") == "deepseek:deepseek-chat"
+    assert model_router.route("") == "deepseek:deepseek-chat"
+
+
+def test_model_router_picks_code(monkeypatch):
+    """代码关键词 → coder；reason 关键词 → reasoner。"""
+    from maestro import model_router
+    monkeypatch.delenv("MAESTRO_MODEL", raising=False)
+    assert model_router.route("写一个 Python 函数统计词频") == "deepseek:deepseek-coder"
+    assert model_router.route("用 JavaScript 实现一个防抖") == "deepseek:deepseek-coder"
+    assert model_router.route("def hello():\n    return 1") == "deepseek:deepseek-coder"
+    assert model_router.route("分析深度学习的反向传播原理") == "deepseek:deepseek-reasoner"
+    assert model_router.route("对比这两种方案为什么前者更好") == "deepseek:deepseek-reasoner"
+
+
+def test_model_router_explicit_prefix(monkeypatch):
+    """prompt 显式前缀（reason:/code:/chat:）强制路由。"""
+    from maestro import model_router
+    monkeypatch.delenv("MAESTRO_MODEL", raising=False)
+    assert model_router.route("reason: 解释这段代码") == "deepseek:deepseek-reasoner"
+    assert model_router.route("code: 普通问候") == "deepseek:deepseek-coder"
+    assert model_router.route("chat: 写个爬虫") == "deepseek:deepseek-chat"
+
+
+def test_model_router_explicit_argument():
+    """调用方传 model 显式参数时，路由函数不修改它。"""
+    from maestro import model_router
+    assert model_router.route("任意", explicit="anthropic:claude-3") == "anthropic:claude-3"
+
+
+def test_model_router_override(monkeypatch):
+    """环境变量可覆盖默认模型。"""
+    from maestro import model_router
+    monkeypatch.setenv("MAESTRO_MODEL_CHAT", "anthropic:claude-3-haiku")
+    monkeypatch.setenv("MAESTRO_MODEL_CODE", "kimi:kimi-k2.6")
+    monkeypatch.setenv("MAESTRO_MODEL_REASON", "deepseek:deepseek-reasoner")
+    assert model_router.route("写函数") == "kimi:kimi-k2.6"
+    assert model_router.route("分析") == "deepseek:deepseek-reasoner"
+    assert model_router.route("普通问") == "anthropic:claude-3-haiku"
+
+
+def test_model_router_info_endpoint(tmp_path, monkeypatch):
+    """GET /api/chat/router 暴露路由配置。"""
+    from fastapi.testclient import TestClient
+    from maestro import server
+
+    monkeypatch.setattr(server, "WEB_DIR", tmp_path)
+    monkeypatch.setattr(server, "WALLPAPER_DIR", tmp_path)
+    monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "m.db"))
+    monkeypatch.setenv("MAESTRO_DB_POOL", "0")
+    monkeypatch.delenv("MAESTRO_MODEL", raising=False)
+    with TestClient(server.app) as c:
+        r = c.get("/api/chat/router")
+        assert r.status_code == 200
+        d = r.json()
+        assert d["auto_routed"] is True
+        assert "deepseek:deepseek-chat" in d["models"]
+        assert "deepseek:deepseek-coder" in d["models"]
+        assert "deepseek:deepseek-reasoner" in d["models"]
+        assert d["default_model"] is None

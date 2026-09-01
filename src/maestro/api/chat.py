@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
@@ -107,6 +108,23 @@ def chat_history(limit: int = 20, conv_id: str | None = None, since_id: int | No
         return {"messages": db.get_chat_history(conn, limit=limit, conv_id=conv_id, since_id=since_id)}
     finally:
         conn.close()
+
+
+@router.get("/api/chat/router")
+def chat_router_info():
+    """前端展示当前可路由模型 + 自动路由开关状态。
+
+    自动路由：
+    - MAESTRO_MODEL 未设 → 自动按 prompt 选 chat/code/reason
+    - MAESTRO_MODEL 已设 → 固定用该模型（用户全局偏好）
+    """
+    from .. import model_router
+
+    return {
+        "auto_routed": model_router.is_model_auto_routed(),
+        "models": model_router.available_models(),
+        "default_model": os.environ.get("MAESTRO_MODEL", "").strip() or None,
+    }
 
 
 @router.get("/api/chat/feed")

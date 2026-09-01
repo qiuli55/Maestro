@@ -137,7 +137,13 @@ def chat_stream(
     db.add_chat_message(conn, "user", message, conv_id=conv_id)
     db.touch_conversation(conn, conv_id)
 
-    model = model or os.environ.get("MAESTRO_MODEL", "deepseek-chat")
+    # 模型路由：显式参数 > 显式 prompt 前缀（reason:/code:/chat:）> 启发式 > 全局默认
+    if model:
+        effective_model = model
+    else:
+        from . import model_router as _router
+        effective_model = _router.route(message)
+    model = effective_model
     # 把 model 解析为 (provider, model_name)，按 provider 选 base_url/api_key。
     # 之前 llm.get_client() 不传 provider → 默认 DeepSeek，kimi/anthropic 等走错端点。
     # 测试桩可能传 0-arg lambda，所以 get_client 需兼容无参调用（默认 provider）。
