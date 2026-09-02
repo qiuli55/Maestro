@@ -6,6 +6,7 @@ PyInstaller 把 launcher 当 __main__，相对导入 `from . import X` 失败。
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import socket
@@ -194,6 +195,11 @@ def _gui_mode(args) -> int:
     if not Path(_icon).exists():
         _icon = str(Path(__file__).resolve().parents[2] / "web" / "favicon.ico")
 
+    # pywebview 5.4~5.x 支持 create_window(icon=)，6.x 已移除——按签名自适应
+    win_kwargs = {}
+    if Path(_icon).exists() and "icon" in inspect.signature(webview.create_window).parameters:
+        win_kwargs["icon"] = _icon
+
     main_window = webview.create_window(
         title="Maestro",
         url=base_url + "/",
@@ -201,22 +207,81 @@ def _gui_mode(args) -> int:
         height=900,
         min_size=(900, 600),
         resizable=True,
-        icon=_icon if Path(_icon).exists() else None,
+        **win_kwargs,
     )
 
+    wallpaper_window = None
     if sys.platform == "win32":
-        webview.create_window(
+        # pywebview 4.x 用 visible=，6.x 改名 hidden=
+        _hidden_kw = ("hidden" if "hidden" in inspect.signature(webview.create_window).parameters
+                      else "visible")
+        wallpaper_window = webview.create_window(
             title="Maestro Wallpaper",
             url=base_url + "/?wallpaper=1",
             width=100, height=100,
             resizable=False,
-            frameless=False,
+            frameless=True,  # 壁纸层不能带标题栏（挂 WorkerW 后会露出关闭/最大化按钮）
             on_top=True,
-            visible=False,
+            **{_hidden_kw: False},
         )
 
+    def _install_wallpaper():
+        """GUI 起来后把壁纸窗口挂到 WorkerW（在 webview.start 的后台线程执行）。"""
+        from maestro import desktop as _desktop
+        for _ in range(50):  # 最多等 10s，native 句柄就绪即挂
+            try:
+                native = getattr(wallpaper_window, "native", None)
+                if native is not None:
+                    hwnd = int(native.Handle.ToInt32())
+                    if hwnd and _desktop.install_wallpaper_layer(hwnd):
+                        _start_mouse_forward(_desktop)
+                        return
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(0.2)
+
+    def _start_mouse_forward(_desktop):
+        """全局鼠标钩子 → 壁纸层注入 mousemove/click（纯转发，桌面零影响）。
+
+        坐标换算：钩子给的是物理屏幕坐标；壁纸窗口铺满虚拟屏幕
+        (vx,vy,vw,vh)，但 WebView2 的 innerWidth/innerHeight 是 DPI 缩放后的
+        client 像素。直接注入物理值在 125%/150% 缩放下会偏——所以注入
+        "(物理偏移)*innerWidth/vw" 表达式，由页面自归一化，任何缩放都对。
+        """
+        from maestro import mouse_hook
+        vx, vy, vw, vh = _desktop._state["rect"]
+        last = [0.0]
+
+        def on_move(x, y):
+            now = time.time()
+            if now - last[0] < 0.03:  # ~30Hz 节流，视差足够
+                return
+            last[0] = now
+            try:
+                wallpaper_window.evaluate_js(
+                    f"window.dispatchEvent(new MouseEvent('mousemove',"
+                    f"{{clientX:({x}-{vx})*innerWidth/{vw},"
+                    f"clientY:({y}-{vy})*innerHeight/{vh}}}))")
+            except Exception:  # noqa: BLE001
+                pass
+
+        def on_click(x, y):
+            # 只在戳到芙莉莲脸上时触发彩蛋；其余区域不注入，桌面照常。
+            # 诊断：把命中的元素 id 写进 document.title（壁纸窗口隐藏，用户不可见），
+            # 供 EnumWindows 远程验证点击链路。
+            try:
+                wallpaper_window.evaluate_js(
+                    f"(function(){{var el=document.elementFromPoint("
+                    f"({x}-{vx})*innerWidth/{vw},({y}-{vy})*innerHeight/{vh});"
+                    f"document.title='MS '+(el?(el.id||el.className||el.tagName):'null');"
+                    f"if(el&&el.id==='hitface')el.click();}})()")
+            except Exception:  # noqa: BLE001
+                pass
+
+        mouse_hook.start(on_move, on_click)
+
     try:
-        webview.start()
+        webview.start(_install_wallpaper if wallpaper_window else None)
     except Exception as e:
         print(f"[Maestro] PyWebView 启动失败：{e}", file=sys.stderr)
         import webbrowser

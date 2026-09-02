@@ -493,3 +493,11 @@
   .win-mini-kind{font-size:9px;color:#7a7aa8;text-align:center}
   .win-mini-drag{flex:1;cursor:grab}
   .win-mini-drag:active{cursor:grabbing}
+
+/* ===== 壁纸层模式（?wallpaper=1）：只留芙莉莲场景，隐藏全部交互 UI =====
+   注意 #bubble 是戳脸彩蛋的台词气泡，壁纸模式必须保留 */
+.wallpaper-mode #dock,
+.wallpaper-mode #maestro,
+.wallpaper-mode #history-panel,
+.wallpaper-mode #wf-builder,
+.wallpaper-mode #reply { display: none !important; }

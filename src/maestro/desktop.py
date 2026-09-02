@@ -96,45 +96,66 @@ else:  # ===== Windows 实现 =====
 
     _state: dict = {"hwnd": None, "parent": None}
 
-    def _find_workerw() -> HWND | None:
-        """EnumWindows 找 Program Manager 下面的 WorkerW（桌面图标容器）。"""
-        progman = GetDesktopWindow()
-        # Progman 后面紧跟一个 WorkerW 用于 SHELLDLL_DefView
-        EnumWindows = user32.EnumWindows
-        EnumChildWindows = user32.EnumChildWindows
-        EnumChildWindows.argtypes = [HWND, ctypes.c_void_p, ctypes.c_long]
-        EnumChildWindows.restype = wintypes.BOOL
-        # 简化为：找 Progman 的子窗口 SHELLDLL_DefView，再取它的下一个 WorkerW
-        SHELLDLL_DefView = HWND()
-        found = HWND()
+    _FindWindowW = user32.FindWindowW
+    _FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    _FindWindowW.restype = HWND
+    _SendMessageTimeoutW = user32.SendMessageTimeoutW
+    _SendMessageTimeoutW.argtypes = [HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+                                     wintypes.UINT, wintypes.UINT, ctypes.POINTER(wintypes.DWORD)]
+    _SendMessageTimeoutW.restype = ctypes.c_long
 
-        def enum_child(hwnd, _lparam):
-            nonlocal SHELLDLL_DefView
-            # 通过类名判断
-            GetClassNameW = user32.GetClassNameW
-            GetClassNameW.argtypes = [HWND, ctypes.c_wchar_p, ctypes.c_int]
-            GetClassNameW.restype = ctypes.c_int
-            buf = ctypes.create_unicode_buffer(256)
-            GetClassNameW(hwnd, buf, 256)
-            if buf.value == "SHELLDLL_DefView":
-                SHELLDLL_DefView = hwnd
+    def _class_name(hwnd: HWND) -> str:
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, buf, 256)
+        return buf.value
+
+    def _spawn_wallpaper_workerw() -> None:
+        """给 Progman 发 0x052C，让 Explorer 在图标层后面生成一个空 WorkerW（壁纸挂点）。"""
+        progman = _FindWindowW("Progman", None)
+        if progman:
+            SMTO_ABORTIFHUNG = 0x0002
+            _SendMessageTimeoutW(progman, 0x052C, 0, 0, SMTO_ABORTIFHUNG, 1000, None)
+
+    def _has_defview_child(hwnd: HWND) -> bool:
+        """该窗口是否把桌面图标层（SHELLDLL_DefView）当孩子。"""
+        found = []
+        CMPFUNC = ctypes.CFUNCTYPE(ctypes.c_int, HWND, wintypes.LPARAM)
+        EnumChildWindows = user32.EnumChildWindows
+        EnumChildWindows.argtypes = [HWND, ctypes.c_void_p, wintypes.LPARAM]
+        EnumChildWindows.restype = wintypes.BOOL
+
+        def enum_child(ch, _lparam):
+            if _class_name(ch) == "SHELLDLL_DefView":
+                found.append(True)
                 return 0
             return 1
 
-        CMPFUNC = ctypes.CFUNCTYPE(ctypes.c_int, HWND, ctypes.c_long)
-        EnumChildWindows(progman, CMPFUNC(enum_child), 0)
-        if not SHELLDLL_DefView:
-            return None
-        # SHELLDLL_DefView 的下一个兄弟窗口就是 WorkerW
-        next_hwnd = GetWindow(SHELLDLL_DefView, GW_HWNDNEXT)
-        if next_hwnd:
-            GetClassNameW = user32.GetClassNameW
-            GetClassNameW.argtypes = [HWND, ctypes.c_wchar_p, ctypes.c_int]
-            buf = ctypes.create_unicode_buffer(256)
-            GetClassNameW(next_hwnd, buf, 256)
-            if buf.value == "WorkerW":
-                return next_hwnd
-        return None
+        EnumChildWindows(hwnd, CMPFUNC(enum_child), 0)
+        return bool(found)
+
+    def _find_workerw() -> HWND | None:
+        """找"图标层正下方"的空 WorkerW 作为壁纸挂点（多壁纸软件共存时最稳）。"""
+        _spawn_wallpaper_workerw()
+        CMPFUNC = ctypes.CFUNCTYPE(ctypes.c_int, HWND, wintypes.LPARAM)
+        icons_workerw = None
+        candidates = []
+
+        def enum_top(hwnd, _lparam):
+            nonlocal icons_workerw
+            if _class_name(hwnd) == "WorkerW":
+                if _has_defview_child(hwnd):
+                    icons_workerw = hwnd
+                else:
+                    candidates.append(hwnd)
+            return True
+
+        user32.EnumWindows(CMPFUNC(enum_top), 0)
+        if icons_workerw:
+            # 图标层 Z 序正下方的空 WorkerW = 标准壁纸挂点
+            below = GetWindow(icons_workerw, GW_HWNDNEXT)
+            if below and _class_name(below) == "WorkerW" and not _has_defview_child(below):
+                return below
+        return candidates[0] if candidates else None
 
     def install_wallpaper_layer(window_handle: int) -> bool:
         """把 PyWebView 的窗口句柄挂到 WorkerW 下面，做成壁纸层。
@@ -177,6 +198,7 @@ else:  # ===== Windows 实现 =====
         ShowWindow(hwnd, SW_SHOW)
         _state["hwnd"] = hwnd
         _state["parent"] = parent
+        _state["rect"] = (vx, vy, vw, vh)  # 供鼠标坐标换算（screen → client）
         return True
 
     def uninstall_wallpaper_layer() -> None:

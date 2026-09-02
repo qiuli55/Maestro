@@ -1,6 +1,12 @@
 (function(){
 "use strict";
 
+  // ========== 壁纸层模式（?wallpaper=1）==========
+  // 注意：页面 CSP 是 script-src 'self'，禁止内联脚本——检测必须放在这个外部文件里
+  if(location.search.indexOf("wallpaper=1")>-1){
+    document.documentElement.classList.add("wallpaper-mode");
+  }
+
   // ========== WindowManager 多窗口系统 ==========
   var winContainer=document.getElementById("win-container");
   var winTabsEl=document.getElementById("win-tabs");
