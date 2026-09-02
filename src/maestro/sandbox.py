@@ -39,7 +39,8 @@ class ApprovalRequest:
     task_id: str
     cmd: str
     subtask_id: str | None
-    created_at: str
+    created_at: str = field(
+        default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
     decision: str = "pending"  # pending / approved / rejected（超时仍为 pending，调用方判 timedout）
     event: threading.Event = field(default_factory=threading.Event, repr=False, compare=False)
 

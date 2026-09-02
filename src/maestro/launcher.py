@@ -82,7 +82,7 @@ def _write_port_file(port: int) -> None:
 # frozen 模式下打包 exe 的 sys.executable 是自身（不是 Python 解释器），
 # 无法 `-m maestro.server`。改成 spawn 系统 Python 解释器跑 server 包；
 # 通过 MAESTRO_HOME（项目根）让 server 找到 configs/web/wallpaper。
-_PY = r"C:\Users\A\.workbuddy\binaries\python\versions\3.13.12\python.exe"
+# 源码模式下后端解释器可用 MAESTRO_PYTHON 环境变量显式指定（默认 sys.executable）
 
 
 def _spawn_server(port: int) -> subprocess.Popen:
@@ -90,7 +90,8 @@ def _spawn_server(port: int) -> subprocess.Popen:
 
     frozen（PyInstaller）：spawn 自身 exe + --server-mode——依赖全在 _MEIPASS，
     系统 Python 没有 dotenv/fastapi 等第三方包，绝不能用系统 Python 跑源码。
-    源码运行：spawn 系统 python -m maestro.server（PYTHONPATH=src）。
+    源码运行：spawn 当前解释器 -m maestro.server（PYTHONPATH=src）；
+    特殊环境可用 MAESTRO_PYTHON 指定另一个装好依赖的解释器。
     """
     import shutil
 
@@ -100,24 +101,28 @@ def _spawn_server(port: int) -> subprocess.Popen:
         env = dict(os.environ)
         env["MAESTRO_PORT"] = str(port)
         env["MAESTRO_HOST"] = "127.0.0.1"
-        env.setdefault("MAESTRO_HOME", str(project_root()))
+        env["MAESTRO_HOME"] = env.get("MAESTRO_HOME") or str(runtime.project_root())
         return subprocess.Popen(cmd, env=env, stdout=_log, stderr=subprocess.STDOUT)
     # 源码运行
-    if Path(_PY).exists():
-        py = _PY
-    else:
-        py = shutil.which("python") or shutil.which("python3") or sys.executable
+    py = (os.environ.get("MAESTRO_PYTHON", "").strip()
+          or sys.executable
+          or shutil.which("python")
+          or shutil.which("python3"))
     env = dict(os.environ)
     env["MAESTRO_PORT"] = str(port)
     env["MAESTRO_HOST"] = "127.0.0.1"
-    env.setdefault("MAESTRO_HOME", str(project_root()))
+    env["MAESTRO_HOME"] = env.get("MAESTRO_HOME") or str(runtime.project_root())
     pp = str(src_dir())
     env["PYTHONPATH"] = pp + os.pathsep + env.get("PYTHONPATH", "")
     return subprocess.Popen(
         [py, "-u", "-m", "maestro.server"],
         env=env,
+        # cwd 固定用 launcher 所在的真实目录（不随 project_root 补丁/配置漂移）
+        cwd=str(Path(__file__).resolve().parent),
         stdout=_log,
         stderr=subprocess.STDOUT,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        if sys.platform == "win32" else 0,
     )
 
 

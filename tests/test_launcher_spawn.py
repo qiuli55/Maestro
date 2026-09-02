@@ -21,7 +21,8 @@ def test_spawn_server_uses_src_dir(tmp_path, monkeypatch):
         # 第一个位置参数是 argv 列表
         cmd = args[0]
         assert cmd[0] == sys.executable
-        assert cmd[1:] == ["-m", "maestro.server"]
+        # -u = 无缓冲 stdout：server 日志直写文件，不能等缓冲区满才落盘
+        assert cmd[1:] == ["-u", "-m", "maestro.server"]
         # cwd 指向 src 子目录
         assert Path(kwargs["cwd"]).name == "maestro"  # launcher 在 src/maestro/launcher.py
         assert Path(kwargs["cwd"]).is_dir()

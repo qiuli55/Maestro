@@ -1,86 +1,61 @@
 """WS 审批推送端到端：sandbox.on_request 钩子 → push_event_threadsafe → /ws 订阅者收到。
 
 这正是前端审批卡片依赖的关键链路（kind=approval），覆盖集成而非单点。
+
+实现说明：钩子与 WS 推送都活在 server 的事件循环进程内（push_event_threadsafe
+靠进程内 loop 调度，没有跨进程通路），所以 e2e 用 TestClient 跑真实 app：
+真实 lifespan（capture_main_loop + 注册审批钩子）+ 真实 /ws 端点，审批从
+独立线程触发（对齐真实"worker 线程里产生审批"的调用形态）。
 """
-import json
-import os
-import subprocess
-import sys
 import threading
 import time
-from pathlib import Path
 
 import pytest
-
-
-def _collect_ws_msgs(host: str, path: str = "/ws", timeout: float = 3.0):
-    """打开 WS 连接并起后台线程收一条消息，返回 (ws, list, thread)。"""
-    from websocket import create_connection
-    ws = create_connection(f"ws://{host}{path}", timeout=timeout)
-    received = []
-
-    def reader():
-        try:
-            ws.settimeout(timeout)
-            msg = ws.recv()
-            received.append(json.loads(msg))
-        except Exception:
-            pass
-
-    t = threading.Thread(target=reader, daemon=True)
-    t.start()
-    return ws, received, t
+from fastapi.testclient import TestClient
 
 
 def test_approval_push_e2e(tmp_path, monkeypatch):
-    """真起服务，触发 approval 钩子，WS 端 5s 内收到 kind=approval 消息。"""
-    from maestro import sandbox
+    """worker 线程触发审批钩子，/ws 订阅者收到 kind=approval 消息。"""
+    from maestro import sandbox, server
+    from maestro.api import deps
     from maestro.sandbox import ApprovalRequest
 
     monkeypatch.setenv("MAESTRO_DB", str(tmp_path / "m.db"))
-    monkeypatch.setenv("MAESTRO_DB_POOL", "0")
-    monkeypatch.setenv("MAESTRO_PORT", "8766")
+    monkeypatch.delenv("MAESTRO_API_KEY", raising=False)  # WS 鉴权放行
 
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "maestro.server"],
-        cwd="src", env=os.environ.copy(),
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    # 钩子列表是模块级状态，测试前后快照还原，防污染其它用例
+    hooks_before = list(sandbox._notify_hooks)
     try:
-        import socket
-        ready = False
-        # Windows 上 uvicorn 启动 + pydantic 初始化可能 10-30s（cold import）
-        for _ in range(120):
-            try:
-                s = socket.socket(); s.settimeout(1)
-                s.connect(("127.0.0.1", 8766))
-                s.send(b"GET /api/healthz HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
-                if b"200" in s.recv(200): ready = True
-                s.close()
-                if ready: break
-            except Exception:
-                time.sleep(0.5)
-        assert ready, "服务未启动"
+        with TestClient(server.app) as client:  # lifespan：capture_main_loop + 注册钩子
+            with client.websocket_connect("/ws") as ws:
+                received = []
 
-        ws, received, reader_t = _collect_ws_msgs("127.0.0.1:8766")
-        time.sleep(0.4)  # WS onopen
+                def reader():
+                    try:
+                        received.append(ws.receive_json())
+                    except Exception:  # noqa: BLE001 — 超时/断开都算没收到
+                        pass
 
-        req = ApprovalRequest(id="ap_e2e_test", task_id="t_e2e", subtask_id="st_x",
-                              cmd="git status")
-        sandbox._notify(req)
-        reader_t.join(timeout=5)
-        ws.close()
+                rt = threading.Thread(target=reader, daemon=True)
+                rt.start()
+                time.sleep(0.3)  # 等 onopen（/ws 连接即自动订阅 __all__）
 
-        assert received, "WS 应收到至少一条消息"
-        msg = received[0]
-        assert msg["kind"] == "approval"
-        assert msg["conv_id"] == "t_e2e"
-        payload = json.loads(msg["content"])
-        assert payload["approval_id"] == "ap_e2e_test"
-        assert payload["cmd"] == "git status"
+                # 模拟 worker 线程产生审批（真实调用形态：沙箱线程里 _notify）
+                req = ApprovalRequest(id="ap_e2e_test", task_id="t_e2e",
+                                      subtask_id="st_x", cmd="git status")
+                nt = threading.Thread(target=sandbox._notify, args=(req,), daemon=True)
+                nt.start()
+                nt.join(timeout=5)
+                rt.join(timeout=5)
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            proc.kill()
+        deps._ws_subscriptions.clear()
+        deps._active_ws_connections.clear()
+        sandbox._notify_hooks[:] = hooks_before
+
+    assert received, "WS 应收到至少一条消息"
+    msg = received[0]
+    assert msg["kind"] == "approval"
+    assert msg["conv_id"] == "t_e2e"
+    payload = __import__("json").loads(msg["content"])
+    assert payload["approval_id"] == "ap_e2e_test"
+    assert payload["cmd"] == "git status"
