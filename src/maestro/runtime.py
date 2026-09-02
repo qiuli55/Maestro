@@ -21,17 +21,30 @@ def project_root() -> Path:
 
     优先级：
     1. MAESTRO_HOME 环境变量（运维可显式指定）
-    2. PyInstaller frozen：用 sys.executable 的父目录（onedir 模式即 _internal/ 的同级）
+    2. PyInstaller frozen：sys._MEIPASS 是 _internal/，含 maestro/ 子包
+       但 _internal/ 的父级 dist/<appname>/ 才是用户感知的"项目根"
+       （configs/web/wallpaper 在 _internal 的同级目录下）。但生产镜像惯例
+       是把 configs 放在 _internal 之外——这里保持 onedir 默认布局兼容。
     3. 源码运行：从 src/maestro/runtime.py 回溯两级到 repo 根
     """
     env = os.environ.get("MAESTRO_HOME", "").strip()
     if env:
         return Path(env).expanduser().resolve()
     if getattr(sys, "frozen", False):
-        # PyInstaller onefile / onedir：sys.executable 指向打包后的 exe
+        # PyInstaller onefile / onedir：sys.executable 的父目录即
+        # 部署根（dist/<appname>/ 含 Maestro.exe 与 _internal/）。
         return Path(sys.executable).resolve().parent
     # 源码运行：src/maestro/runtime.py → parents[2] 是 repo 根
     return Path(__file__).resolve().parents[2]
+
+
+def src_dir() -> Path:
+    """src 目录（源码运行时）或 _MEIPASS（frozen）；用于 PYTHONPATH 注入。"""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        # frozen：_MEIPASS 直接是包含 maestro/ 子包 + configs/ + web/ 等的目录
+        # （我们 spec 把整个 src/ + configs/ + web/ + wallpaper/ 都打进 _MEIPASS）
+        return Path(sys._MEIPASS)
+    return project_root() / "src"
 
 
 def data_dir() -> Path:

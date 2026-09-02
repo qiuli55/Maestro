@@ -57,6 +57,19 @@ a = Analysis(
     binaries=[],
     datas=_datas(),
     hiddenimports=[
+        # fastapi 子模块（server.py 动态 import CORSMiddleware 等）
+        "fastapi",
+        "fastapi.middleware",
+        "fastapi.middleware.cors",
+        "fastapi.responses",
+        "fastapi.staticfiles",
+        # 其他运行时依赖（server.py 顶层 import）
+        "dotenv",
+        "yaml",
+        "openai",
+        # uvicorn 本体 + 子模块（launcher --server-mode 里 uvicorn.run 是动态调用）
+        "uvicorn",
+        "uvicorn.main",
         # uvicorn 子模块（PyInstaller 默认钩子偶有遗漏，显式补齐）
         "uvicorn.logging",
         "uvicorn.loops",

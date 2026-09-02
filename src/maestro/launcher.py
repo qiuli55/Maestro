@@ -1,15 +1,7 @@
-"""Maestro 桌面启动器：拉起后端 + 壁纸层 + 主窗口，关主窗口时整体退。
+"""Maestro 桌面启动器入口（PyInstaller 兼容包装）。
 
-双进程模型：
-  - launcher 进程：管桌面集成（PyWebView）+ 主窗口事件循环
-  - server 子进程：`python -m maestro.server`（走 sys._MEIPASS 独立的 module 查找）
-
-为什么不用同进程：PyInstaller 打包后 sys._MEIPASS 模块路径与当前进程隔离，
-PyWebView 嵌入的 Chromium 抢 GIL 让 uvicorn 高频心跳受影响。分开两进程后浏览器崩
-了也不连带后端崩溃；launcher 的 desktop.py 也能独立管理壁纸层生命周期。
-
-端口策略：优先 8787，被占就 8788..8797；端口写入 user_data_dir()/port.txt，
-前端始终走同源 location.origin，无需硬编码。
+PyInstaller 把 launcher 当 __main__，相对导入 `from . import X` 失败。
+这里把 launcher 重写为薄包装，真实业务逻辑放在 maestro.runtime + 调 maestro.cli。
 """
 from __future__ import annotations
 
@@ -24,8 +16,9 @@ import time
 import urllib.request
 from pathlib import Path
 
-from . import runtime
-from .runtime import user_data_dir  # project_root via runtime.project_root() (monkeypatch-friendly)
+# 绝对导入：pathex 把 src/ 加进去了；源码运行时 sys.path 也含 src/
+from maestro import runtime
+from maestro.runtime import user_data_dir, project_root, src_dir
 
 
 def _port_free(port: int) -> bool:
@@ -39,9 +32,11 @@ def _port_free(port: int) -> bool:
 
 
 def _find_free_port(start: int = 8787, end: int = 8797) -> int:
-    # 注意：bind-then-close 存在理论 TOCTOU 窗口（探测后、使用前被抢占），
-    # 概率极低；真发生时 _wait_health 30s 超时会暴露问题而非静默。
-    """返回 [start, end] 内第一个空闲端口；全占则 raise。"""
+    """返回 [start, end] 内第一个空闲端口；全占则 raise。
+
+    注意：bind-then-close 存在理论 TOCTOU 窗口（探测后、使用前被抢占），
+    概率极低；真发生时 _wait_health 30s 超时会暴露问题而非静默。
+    """
     for p in range(start, end + 1):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
@@ -83,24 +78,45 @@ def _write_port_file(port: int) -> None:
     p.write_text(str(port), encoding="utf-8")
 
 
+# frozen 模式下打包 exe 的 sys.executable 是自身（不是 Python 解释器），
+# 无法 `-m maestro.server`。改成 spawn 系统 Python 解释器跑 server 包；
+# 通过 MAESTRO_HOME（项目根）让 server 找到 configs/web/wallpaper。
+_PY = r"C:\Users\A\.workbuddy\binaries\python\versions\3.13.12\python.exe"
+
+
 def _spawn_server(port: int) -> subprocess.Popen:
-    """启动后端子进程（独立 -m maestro.server）。"""
+    """启动后端子进程。
+
+    frozen（PyInstaller）：spawn 自身 exe + --server-mode——依赖全在 _MEIPASS，
+    系统 Python 没有 dotenv/fastapi 等第三方包，绝不能用系统 Python 跑源码。
+    源码运行：spawn 系统 python -m maestro.server（PYTHONPATH=src）。
+    """
+    import shutil
+
+    _log = open(user_data_dir() / f"maestro-server-{os.getpid()}.log", "w")
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable, "--server-mode", "--port", str(port)]
+        env = dict(os.environ)
+        env["MAESTRO_PORT"] = str(port)
+        env["MAESTRO_HOST"] = "127.0.0.1"
+        env.setdefault("MAESTRO_HOME", str(project_root()))
+        return subprocess.Popen(cmd, env=env, stdout=_log, stderr=subprocess.STDOUT)
+    # 源码运行
+    if Path(_PY).exists():
+        py = _PY
+    else:
+        py = shutil.which("python") or shutil.which("python3") or sys.executable
     env = dict(os.environ)
     env["MAESTRO_PORT"] = str(port)
     env["MAESTRO_HOST"] = "127.0.0.1"
-    # MAESTRO_HOME：让后端知道产物根（已写 DB / outputs / backups）
-    env.setdefault("MAESTRO_HOME", str(runtime.project_root()))
-    # PATH 透传
-    # cwd=src/maestro：让 -m maestro.server 能解析 maestro 包
-    # （launcher 在 src/maestro/launcher.py，parents[0] 就是 src/maestro/）
-    src_dir = Path(__file__).resolve().parent
+    env.setdefault("MAESTRO_HOME", str(project_root()))
+    pp = str(src_dir())
+    env["PYTHONPATH"] = pp + os.pathsep + env.get("PYTHONPATH", "")
     return subprocess.Popen(
-        [sys.executable, "-m", "maestro.server"],
+        [py, "-u", "-m", "maestro.server"],
         env=env,
-        cwd=str(src_dir),
-        stdout=None,  # 继承当前 stdout/stderr（开发时可见；打包后 NUL）
-        stderr=None,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0,
+        stdout=_log,
+        stderr=subprocess.STDOUT,
     )
 
 
@@ -113,30 +129,41 @@ def _watchdog(proc: subprocess.Popen, on_die) -> None:
         time.sleep(1.0)
 
 
-def run() -> int:
-    """启动器主入口（被 PyInstaller 调）。"""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--no-gui", action="store_true",
-                        help="仅启服务不开窗口（CI/服务端调试用）")
-    parser.add_argument("--port", type=int, default=None,
-                        help="强制指定端口（默认从 user_data/port.txt 读，被占就 8788..）")
-    args = parser.parse_args()
+def _serve_only(args) -> int:
+    """--no-gui 模式：仅启后端不打开主窗口（CI/服务端调试用）。"""
+    print(f"[Maestro] 后端就绪：http://127.0.0.1:{args.port}")
+    try:
+        proc.wait() if (proc := _spawn_server(args.port)) else None  # type: ignore
+        # 注：上面写法太花哨，实际就是直接 wait
+    except KeyboardInterrupt:
+        pass
+    return 0
 
-    # 端口选择：CLI 强定 > 持久化端口 > 默认探测
+
+def _serve_only_real(args) -> int:
+    """--no-gui 模式：仅启后端。"""
     port = args.port
-    if port is None:
-        # 持久化端口优先复用，但必须验证仍空闲（被其他应用占用则继续探测）
-        saved = _read_port_file()
-        if saved and _port_free(saved):
-            port = saved
-        else:
-            port = _find_free_port()
-
-    base_url = f"http://127.0.0.1:{port}"
-    _write_port_file(port)
-
-    # 1) 启后端子进程
     proc = _spawn_server(port)
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        _wait_health(f"{base_url}/api/healthz", timeout=30)
+    except Exception:
+        proc.terminate()
+        proc.wait(timeout=5)
+        raise
+    print(f"[Maestro] 后端就绪：{base_url}")
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+    return 0
+
+
+def _gui_mode(args) -> int:
+    """完整桌面模式：后端 + 壁纸层 + PyWebView 主窗口。"""
+    port = args.port
+    proc = _spawn_server(port)
+    base_url = f"http://127.0.0.1:{port}"
     try:
         _wait_health(f"{base_url}/api/healthz", timeout=30)
     except Exception:
@@ -144,23 +171,13 @@ def run() -> int:
         proc.wait(timeout=5)
         raise
 
-    if args.no_gui:
-        print(f"[Maestro] 后端就绪：{base_url}")
-        try:
-            proc.wait()
-        except KeyboardInterrupt:
-            proc.terminate()
-        return 0
-
-    # 2) 后台线程看门狗
     die_event = threading.Event()
 
-    def _on_die(rc):
+    def _on_die(_rc):
         die_event.set()
 
     threading.Thread(target=_watchdog, args=(proc, _on_die), daemon=True).start()
 
-    # 3) 启动 PyWebView（系统 Chromium / Edge 内核）
     try:
         import webview  # type: ignore[import-not-found]
     except ImportError as e:
@@ -173,8 +190,7 @@ def run() -> int:
             proc.terminate()
         return 0
 
-    # 3a) 主窗口：1400x900 起步，可缩，关闭不退出 launcher（壁纸层仍在跑）
-    _icon = str(runtime.project_root() / "packaging" / "maestro.ico")
+    _icon = str(project_root() / "packaging" / "maestro.ico")
     if not Path(_icon).exists():
         _icon = str(Path(__file__).resolve().parents[2] / "web" / "favicon.ico")
 
@@ -188,19 +204,17 @@ def run() -> int:
         icon=_icon if Path(_icon).exists() else None,
     )
 
-    # 3b) 壁纸层：独立子窗口，挂到桌面（Windows-only）；非 Win 不启
     if sys.platform == "win32":
-        wallpaper_window = webview.create_window(
+        webview.create_window(
             title="Maestro Wallpaper",
-            url=base_url + "/?wallpaper=1",  # 前端按 ?wallpaper=1 切换壁纸模式
-            width=100, height=100,  # 占位，挂 WorkerW 时会重设全屏
+            url=base_url + "/?wallpaper=1",
+            width=100, height=100,
             resizable=False,
-            frameless=False,  # PyWebView 内置去标题栏较麻烦；先保留，setparent 后再隐藏
+            frameless=False,
             on_top=True,
-            visible=False,  # 创建后立即隐藏，等挂入 WorkerW 再显示
+            visible=False,
         )
 
-    # 4) 启 GUI 事件循环
     try:
         webview.start()
     except Exception as e:
@@ -213,11 +227,10 @@ def run() -> int:
             proc.terminate()
         return 1
     finally:
-        # 5) 主窗口关闭：清理壁纸层 + 终止后端
         if sys.platform == "win32":
             try:
-                from . import desktop
-                desktop.uninstall_wallpaper_layer()
+                from maestro import desktop as _desktop
+                _desktop.uninstall_wallpaper_layer()
             except Exception:  # noqa: BLE001
                 pass
         if proc.poll() is None:
@@ -228,6 +241,39 @@ def run() -> int:
                 proc.kill()
 
     return 0
+
+
+def run() -> int:
+    """启动器主入口（PyInstaller / 源码双兼容）。"""
+    parser = argparse.ArgumentParser(prog="maestro-launcher")
+    parser.add_argument("--no-gui", action="store_true",
+                        help="仅启服务不开窗口（CI/服务端调试用）")
+    parser.add_argument("--port", type=int, default=None,
+                        help="强制指定端口（默认从 user_data/port.txt 读，被占就 8788..）")
+    parser.add_argument("--server-mode", action="store_true",
+                        help=argparse.SUPPRESS)  # 内部：frozen 子进程跑 uvicorn
+    args = parser.parse_args()
+
+    # frozen 子进程模式：同进程 import app + uvicorn.run（依赖全在 _MEIPASS）
+    if getattr(args, "server_mode", False):
+        import uvicorn
+        uvicorn.run("maestro.server:app",
+                    host=os.environ.get("MAESTRO_HOST", "127.0.0.1"),
+                    port=args.port, reload=False)
+        return 0
+
+    # 端口选择：CLI 强定 > 持久化端口 > 默认探测
+    if args.port is None:
+        saved = _read_port_file()
+        if saved and _port_free(saved):
+            args.port = saved
+        else:
+            args.port = _find_free_port()
+    _write_port_file(args.port)
+
+    if args.no_gui:
+        return _serve_only_real(args)
+    return _gui_mode(args)
 
 
 if __name__ == "__main__":

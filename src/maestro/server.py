@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -46,8 +47,13 @@ from . import runtime as _runtime_mod
 
 # 项目根 + 静态目录：打包后 ROOT 来自 MAESTRO_HOME 或 exe 同级（runtime 统一解析）
 ROOT = _runtime_mod.project_root()
-WEB_DIR = ROOT / "web"
-WALLPAPER_DIR = ROOT / "wallpaper"
+# frozen 下 web/wallpaper 被 spec 打进 _MEIPASS（_internal/），不在 exe 同级
+if _runtime_mod.is_frozen() and hasattr(sys, "_MEIPASS"):
+    WEB_DIR = Path(sys._MEIPASS) / "web"
+    WALLPAPER_DIR = Path(sys._MEIPASS) / "wallpaper"
+else:
+    WEB_DIR = ROOT / "web"
+    WALLPAPER_DIR = ROOT / "wallpaper"
 
 app = FastAPI(title="Maestro 编排器", version="0.2")
 
