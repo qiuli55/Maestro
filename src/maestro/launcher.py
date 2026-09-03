@@ -6,9 +6,11 @@ PyInstaller 把 launcher 当 __main__，相对导入 `from . import X` 失败。
 from __future__ import annotations
 
 import argparse
+import ctypes
 import inspect
 import json
 import os
+import queue
 import socket
 import subprocess
 import sys
@@ -240,50 +242,208 @@ def _gui_mode(args) -> int:
                     hwnd = int(native.Handle.ToInt32())
                     if hwnd and _desktop.install_wallpaper_layer(hwnd):
                         _start_mouse_forward(_desktop)
+                        _start_rect_watchdog(_desktop)
                         return
             except Exception:  # noqa: BLE001
                 pass
             time.sleep(0.2)
 
-    def _start_mouse_forward(_desktop):
-        """全局鼠标钩子 → 壁纸层注入 mousemove/click（纯转发，桌面零影响）。
+    def _start_rect_watchdog(_desktop):
+        """壁纸窗口偶发漂移自愈：周期校验实测矩形，漂了就拉回原位。
 
-        坐标换算：钩子给的是物理屏幕坐标；壁纸窗口铺满虚拟屏幕
-        (vx,vy,vw,vh)，但 WebView2 的 innerWidth/innerHeight 是 DPI 缩放后的
-        client 像素。直接注入物理值在 125%/150% 缩放下会偏——所以注入
-        "(物理偏移)*innerWidth/vw" 表达式，由页面自归一化，任何缩放都对。
+        漂移根因未查明（尺寸不变、位置移出屏幕左上，启动数分钟后偶发），
+        先用 3s 轮询兜底保证可用性。
+        """
+        def _run():
+            while True:
+                time.sleep(3)
+                try:
+                    _desktop.ensure_wallpaper_rect()
+                except Exception:  # noqa: BLE001
+                    pass
+        threading.Thread(target=_run, name="rect-watchdog", daemon=True).start()
+
+    def _start_mouse_forward(_desktop):
+        """全局鼠标钩子 → 壁纸层全交互转发（与网页一致的使用体验）。
+
+        接管决策（钩子线程内同步判定）：
+        - 右键永远放行（桌面右键菜单是用户唯一的桌面操作逃生口）
+        - 问页面 window.__maestroHit：命中交互元素（dock/输入框/面板/按钮/
+          戳脸区等）→ 吞掉转发给壁纸层
+        - 兜底：空桌面（不在图标/任务栏/其它窗口上）也吞掉转发（壁纸即桌面
+          表面，与 Wallpaper Engine 行为一致）
+        - 其余（桌面整理图标、任务栏、普通应用窗口）照常放行，零影响
+
+        慢操作（真正的 evaluate_js 注入）入队由 worker 线程异步做，钩子
+        回调只留一次快速的 hit 判定查询。坐标换算：注入 "(物理偏移)*
+        innerWidth/vw" 表达式由页面自归一化，任何 DPI 缩放都对。
         """
         from maestro import mouse_hook
         vx, vy, vw, vh = _desktop._state["rect"]
+        q: queue.Queue = queue.Queue()
         last = [0.0]
+        pressed = [False]  # 左键按住中（转发 move 带 buttons=1，支持页面内拖拽）
+
+        def cx(x):
+            return f"({x}-{vx})*innerWidth/{vw}"
+
+        def cy(y):
+            return f"({y}-{vy})*innerHeight/{vh}"
+
+        _HIT_HELPER = """window.__maestroHit=function(x,y,vx,vy,vw,vh){
+            try{
+                var px=(x-vx)*innerWidth/vw, py=(y-vy)*innerHeight/vh;
+                var el=document.elementFromPoint(px,py);
+                if(!el)return 'free';
+                var hit=el.closest('#dock,#maestro,#history-panel,#wf-builder,#reply,'
+                    +'#bubble,#hitface,#agent-selector,#conv-list,button,a,input,textarea,'
+                    +'select,label,[role="button"],[contenteditable],.win-mini,.panel,.popup,.modal,.menu');
+                return hit?'mine':'free';
+            }catch(e){return 'err';}}"""
+
+        def _hit_query(x, y):
+            """问页面这个点是否属于壁纸 UI。异常按'非交互'处理。"""
+            expr = f"window.__maestroHit?window.__maestroHit({x},{y},{vx},{vy},{vw},{vh}):'nohelper'"
+            try:
+                r = wallpaper_window.evaluate_js(expr)
+            except Exception:  # noqa: BLE001
+                return "err"
+            if r == "nohelper":  # 页面刷新过：重注入一次再问
+                try:
+                    wallpaper_window.evaluate_js(_HIT_HELPER)
+                    r = wallpaper_window.evaluate_js(expr)
+                except Exception:  # noqa: BLE001
+                    return "err"
+            return r if isinstance(r, str) else "err"
 
         def on_move(x, y):
             now = time.time()
-            if now - last[0] < 0.03:  # ~30Hz 节流，视差足够
+            if now - last[0] < 0.03 and not pressed[0]:  # ~30Hz；拖拽时不节流
                 return
             last[0] = now
             try:
                 wallpaper_window.evaluate_js(
                     f"window.dispatchEvent(new MouseEvent('mousemove',"
-                    f"{{clientX:({x}-{vx})*innerWidth/{vw},"
-                    f"clientY:({y}-{vy})*innerHeight/{vh}}}))")
+                    f"{{clientX:{cx(x)},clientY:{cy(y)},buttons:{1 if pressed[0] else 0}}}))")
             except Exception:  # noqa: BLE001
                 pass
 
-        def on_click(x, y):
-            # 只在戳到芙莉莲脸上时触发彩蛋；其余区域不注入，桌面照常。
-            # 诊断：把命中的元素 id 写进 document.title（壁纸窗口隐藏，用户不可见），
-            # 供 EnumWindows 远程验证点击链路。
+        _BTN = {"ldown": ("mousedown", 0), "lup": ("mouseup", 0),
+                "rdown": ("mousedown", 2), "rup": ("mouseup", 2),
+                "mdown": ("mousedown", 1), "mup": ("mouseup", 1)}
+
+        def _dispatch(kind, x, y, delta):
+            """worker 线程：把事件注入页面。返回 JS 判定结果字符串。"""
+            px, py = cx(x), cy(y)
+            if kind == "wheel":
+                return wallpaper_window.evaluate_js(f"""(function(){{
+                    var el=document.elementFromPoint({px},{py});
+                    document.title='MSW';
+                    if(!el)return 'none';
+                    var step={delta if delta else 0}>0?-56:56,n=el;
+                    while(n&&n!==document.documentElement){{
+                        var cs=getComputedStyle(n);
+                        if((cs.overflowY==='auto'||cs.overflowY==='scroll')&&n.scrollHeight>n.clientHeight){{
+                            n.scrollTop+=step;return 'scroll';}}
+                        n=n.parentElement;}}
+                    return 'noscroll';}})()""")
+            mtype, btn = _BTN[kind]
+            return wallpaper_window.evaluate_js(f"""(function(){{
+                var px={px},py={py};
+                var el=document.elementFromPoint(px,py);
+                document.title='MS '+(el?(el.id||el.className||el.tagName):'null');
+                if(!el)return 'none';
+                var o={{clientX:px,clientY:py,button:{btn},buttons:{btn if mtype=='mousedown' else 0},bubbles:true,cancelable:true,view:window}};
+                el.dispatchEvent(new MouseEvent('{mtype}',o));
+                if('{mtype}'==='mouseup'){{
+                    el.dispatchEvent(new MouseEvent('click',o));
+                    var ed=el.closest?el.closest('input,textarea,select,[contenteditable]'):null;
+                    if(ed){{ed.focus();document.title='MSF '+(ed.id||ed.tagName);return 'editable';}}
+                }}
+                return 'ok';}})()""")
+
+        def _find_webview2_ctl(form_ctl):
+            """递归找 WinForms 宿主里的 WebView2 控件（pythonnet 对象）。"""
             try:
-                wallpaper_window.evaluate_js(
-                    f"(function(){{var el=document.elementFromPoint("
-                    f"({x}-{vx})*innerWidth/{vw},({y}-{vy})*innerHeight/{vh});"
-                    f"document.title='MS '+(el?(el.id||el.className||el.tagName):'null');"
-                    f"if(el&&el.id==='hitface')el.click();}})()")
+                stack = [form_ctl]
+                while stack:
+                    c = stack.pop()
+                    try:
+                        if c.GetType().Name == "WebView2":
+                            return c
+                        for child in c.Controls:
+                            stack.append(child)
+                    except Exception:  # noqa: BLE001
+                        pass
             except Exception:  # noqa: BLE001
                 pass
+            return None
 
-        mouse_hook.start(on_move, on_click)
+        def _focus_wallpaper():
+            """把键盘焦点转给壁纸层的 WebView2（IME 跟焦点走，中文可输入）。
+
+            两层缺一不可：
+            1. OS 前台：壁纸窗所属线程必须在前台，物理键盘才路由进来
+               （SetForegroundWindow + AttachThreadInput 抢前台配方）。
+            2. Chromium 内部焦点：OS SetFocus 不等于 WebView2 认为持有焦点，
+               控制器不认焦点时直接丢弃键盘输入。走官方路径：WinForms 宿主里
+               的 WebView2 控件 .Focus()（内部 MoveFocus(PROGRAMMATIC)），
+               经 BeginInvoke 切到 UI 线程执行。
+            旧的 set_focus_without_activation 保留为 .NET 路径失败时的兜底。
+            """
+            try:
+                native = wallpaper_window.native
+                hwnd = int(native.Handle.ToInt32())
+                my_tid = ctypes.windll.kernel32.GetCurrentThreadId()
+                fg = ctypes.windll.user32.GetForegroundWindow()
+                if int(fg or 0) != hwnd:
+                    fg_tid = ctypes.windll.user32.GetWindowThreadProcessId(fg, None)
+                    ctypes.windll.user32.AttachThreadInput(my_tid, fg_tid, True)
+                    ctypes.windll.user32.SetForegroundWindow(hwnd)
+                    ctypes.windll.user32.AttachThreadInput(my_tid, fg_tid, False)
+                ctl = _find_webview2_ctl(native)
+                if ctl is not None:
+                    from System import Action
+                    native.BeginInvoke(Action(ctl.Focus))
+                    return True
+            except Exception:  # noqa: BLE001
+                pass
+            # 兜底：纯 Win32 焦点转移
+            try:
+                hwnd = int(wallpaper_window.native.Handle.ToInt32())
+                for target in (_desktop.find_webview_input_hwnds(hwnd) or [hwnd]):
+                    if _desktop.set_focus_without_activation(target):
+                        return True
+            except Exception:  # noqa: BLE001
+                pass
+            return False
+
+        def _worker():
+            while True:
+                kind, x, y, delta = q.get()
+                try:
+                    r = _dispatch(kind, x, y, delta)
+                    if kind == "lup" and r == "editable":  # editable 在 mouseup 时判定
+                        _focus_wallpaper()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        def on_interact(kind, x, y, delta):
+            """钩子线程：快速决策是否吞掉。右键永远放行。"""
+            if kind in ("rdown", "rup"):
+                return False
+            mine = _hit_query(x, y) == "mine"
+            if not mine and not _desktop.point_over_empty_desktop(x, y):
+                return False
+            if kind == "ldown":
+                pressed[0] = True
+            elif kind == "lup":
+                pressed[0] = False
+            q.put((kind, x, y, delta))
+            return True
+
+        threading.Thread(target=_worker, daemon=True).start()
+        mouse_hook.start(on_move, on_interact)
 
     try:
         webview.start(_install_wallpaper if wallpaper_window else None)

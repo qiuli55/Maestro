@@ -5,6 +5,13 @@
   // 注意：页面 CSP 是 script-src 'self'，禁止内联脚本——检测必须放在这个外部文件里
   if(location.search.indexOf("wallpaper=1")>-1){
     document.documentElement.classList.add("wallpaper-mode");
+    // 诊断通道：输入回显进 document.title（壁纸窗口隐藏，供启动器/测试远程验证
+    // 键盘是否真正到达输入框；副作用可忽略——title 用户不可见）
+    document.addEventListener("input", function(e){
+      if(e.target && e.target.id==="dock-input"){
+        document.title="IN:"+String(e.target.value||"").slice(-40);
+      }
+    }, true);
   }
 
   // ========== WindowManager 多窗口系统 ==========

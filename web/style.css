@@ -494,10 +494,7 @@
   .win-mini-drag{flex:1;cursor:grab}
   .win-mini-drag:active{cursor:grabbing}
 
-/* ===== 壁纸层模式（?wallpaper=1）：只留芙莉莲场景，隐藏全部交互 UI =====
-   注意 #bubble 是戳脸彩蛋的台词气泡，壁纸模式必须保留 */
-.wallpaper-mode #dock,
-.wallpaper-mode #maestro,
-.wallpaper-mode #history-panel,
-.wallpaper-mode #wf-builder,
-.wallpaper-mode #reply { display: none !important; }
+/* ===== 壁纸层模式（?wallpaper=1）=====
+   2026-09-02 起壁纸层升级为全交互：与网页完全同构（dock/聊天/任务窗全可见），
+   交互由启动器的全局鼠标钩子转发 + 焦点转移实现（见 src/maestro/launcher.py）。
+   wallpaper-mode 类保留作 minor 调整钩子，不再隐藏任何 UI。 */
