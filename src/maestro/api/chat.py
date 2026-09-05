@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -10,6 +11,8 @@ from fastapi.responses import StreamingResponse
 from .. import db
 from .deps import broadcast_to_ws
 from .. import chat
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -89,8 +92,8 @@ def chat_message_stream(payload: dict, background: BackgroundTasks):
         if reply:
             try:
                 await broadcast_to_ws(conv_at_end, "assistant", reply)
-            except Exception:  # noqa: BLE001 — WS 失败不阻塞其他流程
-                pass
+            except Exception as e:  # noqa: BLE001 — WS 失败不阻塞其他流程
+                logger.warning("流式结束后 WS 广播失败 conv=%s: %s", conv_at_end, e)
 
     background.add_task(_broadcast_after_stream)
     return StreamingResponse(gen(), media_type="text/event-stream")

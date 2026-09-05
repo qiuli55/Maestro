@@ -115,77 +115,103 @@ _RUNCMD_TOOL = {
 }
 
 
+def _tool_read_file(args: dict, ctx: dict) -> str:
+    """read_file 工具：读 workdir 下文件（safe_read 做路径安全校验）。"""
+    return safe_read(args.get("path", ""), ctx["workdir"])
+
+
+def _tool_write_file(args: dict, ctx: dict) -> str:
+    """write_file 工具：写输出目录；禁止绝对路径/盘符/路径穿越。"""
+    filename = args.get("filename", "")
+    content = args.get("content", "")
+    if not filename:
+        return "[write_file] 错误：需要 filename 参数"
+    # 安全检查：禁止写入敏感路径（绝对路径/盘符/路径穿越字符）
+    if ".." in filename or "/" in filename or "\\" in filename or ":" in filename:
+        return "[write_file] 错误：文件名不能包含路径字符"
+    out_path = _ensure_output_dir() / filename
+    try:
+        out_path.write_text(content, encoding="utf-8")
+        return f"[write_file] 成功：{out_path}"
+    except Exception as e:
+        return f"[write_file] 失败：{e}"
+
+
+def _tool_generate_image(args: dict, ctx: dict) -> str:
+    """generate_image 工具：DALL-E 生图并下载到输出目录。"""
+    prompt = args.get("prompt", "")
+    if not prompt:
+        return "[generate_image] 错误：需要 prompt 参数"
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return "[generate_image] 错误：未设置 OPENAI_API_KEY 环境变量（需要 DALL-E 生成图片）"
+
+    try:
+        from openai import OpenAI  # noqa: F401 - 本地延迟导入
+
+        client = OpenAI(api_key=api_key)
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1024x1024",
+            quality="standard",
+            n=1,
+        )
+        image_url = response.data[0].url
+        # 下载图片并保存（加 30s 超时，避免 DALL-E CDN 挂起时 worker 卡死）
+        import urllib.request
+
+        img_data = urllib.request.urlopen(image_url, timeout=30).read()
+        # 文件名：UUID 兜底，避免不同 prompt 前 20 字相同导致覆盖
+        safe_hint = re.sub(r"[^\w]", "_", prompt[:20])[:20]
+        img_name = f"image_{safe_hint}_{_uuid_for_image.uuid4().hex[:6]}.png"
+        img_path = _ensure_output_dir() / img_name
+        img_path.write_bytes(img_data)
+        return f"[generate_image] 成功：{img_path}\n图片 URL: {image_url}"
+    except Exception as e:
+        return f"[generate_image] 失败：{e}"
+
+
+def _tool_list_files(args: dict, ctx: dict) -> str:
+    """list_files 工具：列出输出目录内容。"""
+    try:
+        files = list(_resolve_output_dir().glob("*"))
+        if not files:
+            return "[list_files] 输出目录为空"
+        return "[list_files] " + "\n".join(f"- {f.name}" for f in files)
+    except Exception as e:
+        return f"[list_files] 失败：{e}"
+
+
+def _tool_run_command(args: dict, ctx: dict) -> str:
+    """run_command 工具：三档分级 + 审批流（见 runcmd.run_command）。"""
+    cmd = args.get("command", "")
+    if not cmd:
+        return "[run_command] 错误：需要 command 参数"
+    return run_command(cmd, ctx["workdir"],
+                       task_id=ctx["task_id"], subtask_id=ctx["subtask_id"])
+
+
+# 工具注册表：加新工具只需实现 _tool_xxx(args, ctx) 并在此登记（规则 8：不改老代码）
+_TOOL_HANDLERS = {
+    "read_file": _tool_read_file,
+    "write_file": _tool_write_file,
+    "generate_image": _tool_generate_image,
+    "list_files": _tool_list_files,
+    "run_command": _tool_run_command,
+}
+
+
 def _executor(workdir: str, task_id: str | None = None, subtask_id: str | None = None):
+    """构造工具执行器（LLM tool_calls 回调）：按工具名查注册表分发。"""
+    ctx = {"workdir": workdir, "task_id": task_id, "subtask_id": subtask_id}
+
     def run(name: str, args: dict) -> str:
-        if name == "read_file":
-            return safe_read(args.get("path", ""), workdir)
-
-        elif name == "write_file":
-            filename = args.get("filename", "")
-            content = args.get("content", "")
-            if not filename:
-                return "[write_file] 错误：需要 filename 参数"
-            # 安全检查：禁止写入敏感路径（绝对路径/盘符/路径穿越字符）
-            if ".." in filename or "/" in filename or "\\" in filename or ":" in filename:
-                return "[write_file] 错误：文件名不能包含路径字符"
-            out_dir = _ensure_output_dir()
-            out_path = out_dir / filename
-            try:
-                out_path.write_text(content, encoding="utf-8")
-                return f"[write_file] 成功：{out_path}"
-            except Exception as e:
-                return f"[write_file] 失败：{e}"
-
-        elif name == "generate_image":
-            prompt = args.get("prompt", "")
-            if not prompt:
-                return "[generate_image] 错误：需要 prompt 参数"
-
-            api_key = os.environ.get("OPENAI_API_KEY")
-            if not api_key:
-                return "[generate_image] 错误：未设置 OPENAI_API_KEY 环境变量（需要 DALL-E 生成图片）"
-
-            try:
-                from openai import OpenAI  # noqa: F401 - 本地延迟导入
-
-                client = OpenAI(api_key=api_key)
-                response = client.images.generate(
-                    model="dall-e-3",
-                    prompt=prompt,
-                    size="1024x1024",
-                    quality="standard",
-                    n=1,
-                )
-                image_url = response.data[0].url
-                # 下载图片并保存（加 30s 超时，避免 DALL-E CDN 挂起时 worker 卡死）
-                import urllib.request
-
-                img_data = urllib.request.urlopen(image_url, timeout=30).read()
-                # 文件名：UUID 兜底，避免不同 prompt 前 20 字相同导致覆盖
-                safe_hint = re.sub(r"[^\w]", "_", prompt[:20])[:20]
-                img_name = f"image_{safe_hint}_{_uuid_for_image.uuid4().hex[:6]}.png"
-                img_path = _ensure_output_dir() / img_name
-                img_path.write_bytes(img_data)
-                return f"[generate_image] 成功：{img_path}\n图片 URL: {image_url}"
-            except Exception as e:
-                return f"[generate_image] 失败：{e}"
-
-        elif name == "list_files":
-            try:
-                files = list(_resolve_output_dir().glob("*"))
-                if not files:
-                    return "[list_files] 输出目录为空"
-                return "[list_files] " + "\n".join(f"- {f.name}" for f in files)
-            except Exception as e:
-                return f"[list_files] 失败：{e}"
-
-        elif name == "run_command":
-            cmd = args.get("command", "")
-            if not cmd:
-                return "[run_command] 错误：需要 command 参数"
-            return run_command(cmd, workdir, task_id=task_id, subtask_id=subtask_id)
-
-        return f"[未知工具] {name}"
+        handler = _TOOL_HANDLERS.get(name)
+        if handler is None:
+            return f"[未知工具] {name}"
+        return handler(args, ctx)
 
     return run
 

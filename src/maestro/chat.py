@@ -100,22 +100,8 @@ def _linked_context_block(conn: sqlite3.Connection, link_conv_ids) -> str:
     )
 
 
-def chat_stream(
-    conn: sqlite3.Connection,
-    message: str,
-    conv_id: str = db.DEFAULT_CONV_ID,
-    model: str | None = None,
-    link_conv_ids: list[str] | None = None,
-):
-    """流式闲聊（打字机效果）：yield ("delta", text) 增量 / ("error", msg) / ("done", reply)。
-
-    与 chat() 相同的前置（档案/历史/存 user 消息），LLM stream=True 逐块 yield；
-    assistant 完整回复在流结束时存库（中断则丢弃本次回复）。
-    """
-    message = (message or "").strip()
-    if not message:
-        raise ValueError("消息不能为空")
-
+def _prepare_chat_messages(conn, message: str, conv_id: str, link_conv_ids) -> list[dict]:
+    """闲聊前置：档案提取 + 组装 system/历史 + 落 user 消息。返回 LLM 消息列表。"""
     _extract_profile(conn, message)
 
     system = _system_prompt()
@@ -136,24 +122,49 @@ def chat_stream(
 
     db.add_chat_message(conn, "user", message, conv_id=conv_id)
     db.touch_conversation(conn, conv_id)
+    return messages
 
-    # 模型路由：显式参数 > 显式 prompt 前缀（reason:/code:/chat:）> 启发式 > 全局默认
+
+def _resolve_chat_model(message: str, model: str | None):
+    """模型路由 + client 解析，返回 (client, model_name)。
+
+    路由优先级：显式参数 > 显式 prompt 前缀（reason:/code:/chat:）> 启发式 > 全局默认。
+    把 model 解析为 (provider, model_name)——之前 llm.get_client() 不传 provider
+    默认 DeepSeek，kimi/anthropic 等会走错端点。
+    """
     if model:
-        effective_model = model
+        effective = model
     else:
         from . import model_router as _router
-        effective_model = _router.route(message)
-    model = effective_model
-    # 把 model 解析为 (provider, model_name)，按 provider 选 base_url/api_key。
-    # 之前 llm.get_client() 不传 provider → 默认 DeepSeek，kimi/anthropic 等走错端点。
-    # 测试桩可能传 0-arg lambda，所以 get_client 需兼容无参调用（默认 provider）。
-    provider, model_name = llm._resolve(model)
+        effective = _router.route(message)
+    provider, model_name = llm._resolve(effective)
     try:
         client, default_model = llm.get_client(provider)
     except TypeError:
-        # 测试桩：lambda 无参 → 兼容旧调用
+        # 测试桩可能传 0-arg lambda，所以 get_client 需兼容无参调用（默认 provider）
         client, default_model = llm.get_client(), model_name
-    model_name = model_name or default_model
+    return client, model_name or default_model
+
+
+def chat_stream(
+    conn: sqlite3.Connection,
+    message: str,
+    conv_id: str = db.DEFAULT_CONV_ID,
+    model: str | None = None,
+    link_conv_ids: list[str] | None = None,
+):
+    """流式闲聊（打字机效果）：yield ("delta", text) 增量 / ("error", msg) / ("done", reply)。
+
+    与 chat() 相同的前置（档案/历史/存 user 消息），LLM stream=True 逐块 yield；
+    assistant 完整回复在流结束时存库（中断则丢弃本次回复）。
+    """
+    message = (message or "").strip()
+    if not message:
+        raise ValueError("消息不能为空")
+
+    messages = _prepare_chat_messages(conn, message, conv_id, link_conv_ids)
+    client, model_name = _resolve_chat_model(message, model)
+
     parts: list[str] = []
     try:
         stream = client.chat.completions.create(

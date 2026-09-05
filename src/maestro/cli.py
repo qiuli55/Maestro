@@ -46,8 +46,8 @@ def _print_status(conn, task_id: str):
             print(md[md.index(marker) :])
 
 
-def main(argv: list[str] | None = None):
-    load_dotenv()  # 载入 DEEPSEEK_API_KEY 等
+def _build_parser() -> argparse.ArgumentParser:
+    """构造 CLI 子命令解析器（run/status/retry/reset/serve）。"""
     parser = argparse.ArgumentParser(prog="maestro", description="壁纸多 Agent 编排器 (P1)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None):
     run_p.add_argument("--input", help="输入文本文件；省略读 stdin")
     run_p.add_argument("--worker", choices=["opencode", "octo", "embedded"], default="embedded")
     run_p.add_argument("--serial", action="store_true", help="串行派发（场景 B 默认并行）")
-    run_p.add_argument("--timeout", type=int, default=int(__import__("os").environ.get("WORKER_TIMEOUT", "600")))
+    run_p.add_argument("--timeout", type=int, default=int(os.environ.get("WORKER_TIMEOUT", "600")))
 
     status_p = sub.add_parser("status", help="查看任务状态")
     status_p.add_argument("task_id")
@@ -76,8 +76,44 @@ def main(argv: list[str] | None = None):
     serve_p = sub.add_parser("serve", help="启动 Web 服务（P2 任务窗口）")
     serve_p.add_argument("--host", default="127.0.0.1")
     serve_p.add_argument("--port", type=int, default=8787)
+    return parser
 
-    args = parser.parse_args(argv)
+
+def _cmd_run(conn, args) -> int:
+    """run 子命令：读输入 → 提交任务 → 打印状态。"""
+    prompt = _read_input(args)
+    if not prompt.strip():
+        print("错误：输入为空")
+        return 1
+    task_id = orchestrator.run_task(
+        conn,
+        prompt,
+        scenario=args.scenario,
+        worker_type=args.worker,
+        timeout=args.timeout,
+        parallel=not args.serial,
+    )
+    print(f"任务已提交：{task_id}")
+    _print_status(conn, task_id)
+    return 0
+
+
+def _cmd_reset(conn, task_id: str) -> None:
+    """清空指定任务（子任务/任务/事件 + 产物目录）。开发期用。"""
+    task = db.get_task(conn, task_id)
+    if task:
+        for st in db.get_subtasks(conn, task_id):
+            conn.execute("DELETE FROM subtasks WHERE id=?", (st["id"],))
+        conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+        conn.execute("DELETE FROM task_events WHERE task_id=?", (task_id,))
+        conn.commit()
+    shutil.rmtree(orchestrator.OUTPUTS_ROOT / task_id, ignore_errors=True)
+
+
+def main(argv: list[str] | None = None):
+    """CLI 主入口：分发到 run/status/retry/reset/serve 子命令。"""
+    load_dotenv()  # 载入 DEEPSEEK_API_KEY 等
+    args = _build_parser().parse_args(argv)
     conn = db.init_db()
 
     if args.cmd == "serve":
@@ -86,42 +122,17 @@ def main(argv: list[str] | None = None):
         print(f"Maestro Web 启动于 http://{args.host}:{args.port}")
         uvicorn.run("maestro.server:app", host=args.host, port=args.port, reload=False)
         return 0
-
     if args.cmd == "run":
-        prompt = _read_input(args)
-        if not prompt.strip():
-            print("错误：输入为空")
-            return 1
-        task_id = orchestrator.run_task(
-            conn,
-            prompt,
-            scenario=args.scenario,
-            worker_type=args.worker,
-            timeout=args.timeout,
-            parallel=not args.serial,
-        )
-        print(f"任务已提交：{task_id}")
-        _print_status(conn, task_id)
-        return 0
-
+        return _cmd_run(conn, args)
     if args.cmd == "status":
         _print_status(conn, args.task_id)
         return 0
-
     if args.cmd == "retry":
         st = orchestrator.retry_subtask(conn, args.subtask_id, timeout=args.timeout)
         print(f"重派完成：{st['id']} -> {st['status']}")
         return 0
-
     if args.cmd == "reset":
-        task = db.get_task(conn, args.task_id)
-        if task:
-            for st in db.get_subtasks(conn, args.task_id):
-                conn.execute("DELETE FROM subtasks WHERE id=?", (st["id"],))
-            conn.execute("DELETE FROM tasks WHERE id=?", (args.task_id,))
-            conn.execute("DELETE FROM task_events WHERE task_id=?", (args.task_id,))
-            conn.commit()
-        shutil.rmtree(orchestrator.OUTPUTS_ROOT / args.task_id, ignore_errors=True)
+        _cmd_reset(conn, args.task_id)
         print(f"已重置：{args.task_id}")
         return 0
 

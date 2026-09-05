@@ -32,22 +32,11 @@ def healthz():
     return {"status": "ok"}
 
 
-@router.get("/api/health/dashboard")
-def health_dashboard():
-    """前端状态面板用：服务健康 + 当前任务 + 待审批 + 最近错误 + WS 连接。
-
-    比 /metrics 更面向人（友好文本 + 时间倒序错误列表），与 Prometheus 互补。
-    任何异常都被吞，degraded=true 提示，不抛 5xx。
-    """
+def _collect_db_stats(info: dict, _add) -> None:
+    """统计任务/审批/近期错误到 info；失败置 degraded（面板永远要返回）。"""
     from datetime import UTC, datetime, timedelta
 
     from .. import db
-    from . import deps
-
-    info = {"version": "0.2", "degraded": False, "errors": []}
-
-    def _add(level: str, msg: str, **extra) -> None:
-        info["errors"].append({"level": level, "msg": msg, **extra})
 
     try:
         conn = db.init_db()
@@ -80,13 +69,35 @@ def health_dashboard():
         info["degraded"] = True
         _add("error", f"数据库查询失败：{type(e).__name__}: {str(e)[:120]}")
 
+
+def _collect_ws_stats(info: dict) -> None:
+    """统计 WS 连接数到 info；失败写 -1（面板永远要返回）。"""
+    from . import deps
+
     try:
         with deps._ws_lock:
             info["ws_connections"] = len(deps._active_ws_connections)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — 连接数统计失败不拖垮面板
         info["ws_connections"] = -1
 
-    if info.get("tasks_failed", 0) > 10 or info["approvals_pending"] > 20:
+
+@router.get("/api/health/dashboard")
+def health_dashboard():
+    """前端状态面板用：服务健康 + 当前任务 + 待审批 + 最近错误 + WS 连接。
+
+    比 /metrics 更面向人（友好文本 + 时间倒序错误列表），与 Prometheus 互补。
+    任何异常都被吞，degraded=true 提示，不抛 5xx。
+    """
+    info = {"version": "0.2", "degraded": False, "errors": []}
+
+    def _add(level: str, msg: str, **extra) -> None:
+        info["errors"].append({"level": level, "msg": msg, **extra})
+
+    _collect_db_stats(info, _add)
+    _collect_ws_stats(info)
+
+    # get 兜底：DB 查询失败时 tasks_failed/approvals_pending 可能未写入（不抛 5xx）
+    if info.get("tasks_failed", 0) > 10 or info.get("approvals_pending", 0) > 20:
         _add("warn", "积压较多（失败任务/待审批超过阈值 10/20）")
 
     if info["degraded"]:

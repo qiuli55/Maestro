@@ -227,8 +227,8 @@ async def _backup_loop() -> None:
     while True:
         try:
             _db.backup_database(keep=7)
-        except Exception:  # noqa: BLE001 — 备份失败不拖垮服务
-            pass
+        except Exception as e:  # noqa: BLE001 — 备份失败不拖垮服务
+            log.warning("在线备份失败（24h 后重试）: %s", e)
         await _asyncio.sleep(24 * 3600)
 
 

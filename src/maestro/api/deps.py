@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import threading
 from pathlib import Path
@@ -11,6 +12,8 @@ from fastapi import WebSocket
 
 from .. import db  # noqa: F401  （保持 db 导入语义）
 from .. import sandbox
+
+logger = logging.getLogger(__name__)
 
 
 def _compare_keys(provided: str, expected: str) -> bool:
@@ -156,8 +159,8 @@ async def prune_old_events_startup() -> None:
             db.prune_old_events(conn, days=30)
         finally:
             conn.close()
-    except Exception:  # noqa: BLE001 — 清理失败不影响启动
-        pass
+    except Exception as e:  # noqa: BLE001 — 清理失败不影响启动
+        logger.warning("启动清理 30 天前事件失败: %s", e)
 
 
 # ---- 审批实时推送：注册 sandbox 钩子（用户不用再等 2s 轮询，命令 120s 就超时）----

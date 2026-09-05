@@ -187,6 +187,25 @@ class CircuitOpenError(RuntimeError):
     """熔断器打开时抛出（避免再调上游）。"""
 
 
+def _attempt_with_retry(fn, args, kwargs, retry, breaker):
+    """执行一次（含重试策略）：成败都上报熔断器；非瞬时故障或重试耗尽即重抛。"""
+    last_exc = None
+    for attempt in range(retry.max_retries + 1):
+        try:
+            result = fn(*args, **kwargs)
+            breaker.record_success()
+            return result
+        except Exception as e:  # noqa: BLE001 — KeyboardInterrupt/SystemExit 不参与重试与熔断计数
+            last_exc = e
+            breaker.record_failure()
+            if not is_transient_error(e):
+                raise
+            if attempt >= retry.max_retries:
+                raise
+            time.sleep(retry.delay(attempt))
+    raise last_exc  # pragma: no cover
+
+
 def with_resilience(
     retry=None,
     breaker=None,
@@ -228,22 +247,7 @@ def with_resilience(
                 raise CircuitOpenError(
                     f"circuit breaker open (fail_count>={breaker.fail_threshold})"
                 )
-
-            last_exc = None
-            for attempt in range(retry.max_retries + 1):
-                try:
-                    result = fn(*args, **kwargs)
-                    breaker.record_success()
-                    return result
-                except Exception as e:  # noqa: BLE001 — KeyboardInterrupt/SystemExit 不参与重试与熔断计数
-                    last_exc = e
-                    breaker.record_failure()
-                    if not is_transient_error(e):
-                        raise
-                    if attempt >= retry.max_retries:
-                        raise
-                    time.sleep(retry.delay(attempt))
-            raise last_exc  # pragma: no cover
+            return _attempt_with_retry(fn, args, kwargs, retry, breaker)
 
         wrapper.__name__ = fn.__name__
         wrapper.__doc__ = fn.__doc__

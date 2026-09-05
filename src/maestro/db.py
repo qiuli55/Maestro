@@ -1,11 +1,14 @@
 """SQLite 状态层：任务 / 子任务 / 事件，支持重启恢复。"""
 
 import json
+import logging
 import os
 import sqlite3
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # 状态机合法取值
 PENDING = "pending"
@@ -56,8 +59,8 @@ def close_thread() -> None:
     for path, conn in list(_pool.conns.items()):
         try:
             conn.close()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001 — 清理失败只记录，不阻断其余连接
+            logger.debug("关闭连接 %s 失败: %s", path, e)
         _pool_stats["close"] += 1
     _pool.conns.clear()
 
@@ -67,6 +70,158 @@ def close_thread() -> None:
 # 环境变量切换 db_path 会产生新 key，天然正确；测试 fresh tmp 库也各是独立 key。
 _migrated: set[str] = set()
 _migrated_lock = threading.Lock()
+
+
+def _tables_present(conn: sqlite3.Connection) -> bool:
+    """tasks 表是否真实存在（迁移标记不可信时的实测校验）。"""
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'"
+    ).fetchone() is not None
+
+
+def _connect(db_path: Path) -> sqlite3.Connection:
+    """新建连接：row_factory + busy_timeout + WAL。
+
+    WAL 模式：读写并发不互斥（默认 rollback 模式下，写锁会阻塞所有读）。
+    并发测试偶发 `database is locked` 即因此——WAL 缓解之。
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=5000")  # 并发连接写同一文件时等待而非立即失败
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.DatabaseError:
+        pass  # 临时文件系统不支持 WAL 时忽略，回退默认模式
+    return conn
+
+
+def _needs_full_setup(conn: sqlite3.Connection, key: str) -> bool:
+    """判断是否需要跑全套建表/迁移；标记存在但表缺失时清标记。
+
+    进程内已迁移过的库标记不可信——库文件可能被删/替换/损坏，实测校验
+    tasks 表（CREATE IF NOT EXISTS 幂等，重跑无副作用，仅避免高频重复开销）。
+    """
+    if key not in _migrated:
+        return True
+    if _tables_present(conn):
+        return False
+    with _migrated_lock:
+        _migrated.discard(key)
+    return True
+
+
+# 7 张核心表的幂等 DDL（CREATE IF NOT EXISTS，重跑无副作用）
+_DDL_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS tasks (
+        id           TEXT PRIMARY KEY,
+        user_prompt TEXT,
+        status       TEXT NOT NULL DEFAULT 'pending',
+        result       TEXT,
+        result_path  TEXT,
+        scenario     TEXT,
+        worker_type  TEXT,
+        parallel     INTEGER NOT NULL DEFAULT 1,
+        no_merge     INTEGER NOT NULL DEFAULT 0,
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT NOT NULL,
+        cancel_requested_at  TEXT  -- 用户发起取消的时间（ISO8601）；子任务 spawn 前检查，未走完的子任务被打断
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS subtasks (
+        id              TEXT PRIMARY KEY,
+        task_id         TEXT NOT NULL REFERENCES tasks(id),
+        idx             INTEGER NOT NULL,
+        desc            TEXT NOT NULL,
+        worker_type     TEXT NOT NULL,
+        model           TEXT,
+        stage           INTEGER,
+        status          TEXT NOT NULL DEFAULT 'pending',
+        output          TEXT,
+        error           TEXT,
+        result_path     TEXT,
+        source_segments TEXT,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS task_events (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id    TEXT NOT NULL,
+        subtask_id TEXT,
+        ts         TEXT NOT NULL,
+        event      TEXT NOT NULL,
+        data       TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS chat_messages (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        role       TEXT NOT NULL,
+        content    TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS approvals (
+        id         TEXT PRIMARY KEY,
+        task_id    TEXT NOT NULL,
+        subtask_id TEXT,
+        cmd        TEXT NOT NULL,
+        status     TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        decided_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS user_profile (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS conversations (
+        id         TEXT PRIMARY KEY,
+        title      TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+)
+
+
+def _create_tables(conn: sqlite3.Connection) -> None:
+    """建 7 张核心表（幂等 DDL，逐条执行 _DDL_STATEMENTS）。"""
+    for ddl in _DDL_STATEMENTS:
+        conn.execute(ddl)
+
+
+def _run_migrations(conn: sqlite3.Connection) -> None:
+    """幂等补列/补数据（存量库升级路径）。"""
+    # 存量库（如已运行的 maestro.db）可能没有 data 列，幂等补列
+    _ensure_event_data_column(conn)
+    _ensure_task_columns(conn)
+    _ensure_conv_column(conn)
+    _ensure_conv_kind_column(conn)
+    _ensure_subtask_model_column(conn)
+    _ensure_subtask_stage_column(conn)
+    _ensure_default_conversation(conn)
+
+
+def _create_indexes(conn: sqlite3.Connection) -> None:
+    """建索引（高频查询加速；CREATE INDEX IF NOT EXISTS 幂等）。
+
+    subtasks.task_id：每次执行任务都按 task_id 查子任务列表
+    task_events.task_id：每个任务详情页都按 task_id 查事件
+    """
+    _ensure_index(conn, "subtasks", "subtasks_task_id_idx", "(task_id)")
+    _ensure_index(conn, "task_events", "task_events_task_id_idx", "(task_id)")
+    _ensure_index(conn, "task_events", "task_events_subtask_id_idx", "(subtask_id)")
+    _ensure_index(conn, "approvals", "approvals_task_id_idx", "(task_id)")
+    _ensure_index(conn, "chat_messages", "chat_messages_conv_id_idx", "(conv_id)")
 
 
 def init_db(db_path: Path | str | None = None, *, use_cache: bool | None = None) -> sqlite3.Connection:
@@ -99,141 +254,14 @@ def init_db(db_path: Path | str | None = None, *, use_cache: bool | None = None)
             _pool_stats["reuse"] += 1
             return cached
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=5000")  # 并发连接写同一文件时等待而非立即失败
-    if key in _migrated:
-        # 进程内已对这个库跑过全套 DDL/迁移；但库文件可能被删/替换/损坏，
-        # 标记不可信——校验 tasks 表真实存在，缺失则重跑建表（CREATE IF NOT
-        # EXISTS 幂等，重跑无副作用，仅避免高频重复开销）。
-        has_tasks = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'"
-        ).fetchone()
-        if has_tasks:
-            if use_cache:
-                _pool.conns[key] = conn
-                _pool_stats["open"] += 1
-            return conn
-        # 表缺失：清标记走完整建表流程
+    conn = _connect(db_path)
+    if _needs_full_setup(conn, key):
+        _create_tables(conn)
+        _run_migrations(conn)
+        _create_indexes(conn)
+        conn.commit()
         with _migrated_lock:
-            _migrated.discard(key)
-    # WAL 模式：读写并发不互斥（默认 rollback 模式下，写锁会阻塞所有读）。
-    # 并发测试偶发 `database is locked` 即因此——WAL 缓解之。
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-    except sqlite3.DatabaseError:
-        pass  # 临时文件系统不支持 WAL 时忽略，回退默认模式
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS tasks (
-            id           TEXT PRIMARY KEY,
-            user_prompt TEXT,
-            status       TEXT NOT NULL DEFAULT 'pending',
-            result       TEXT,
-            result_path  TEXT,
-            scenario     TEXT,
-            worker_type  TEXT,
-            parallel     INTEGER NOT NULL DEFAULT 1,
-            no_merge     INTEGER NOT NULL DEFAULT 0,
-            created_at   TEXT NOT NULL,
-            updated_at   TEXT NOT NULL,
-            cancel_requested_at  TEXT  -- 用户发起取消的时间（ISO8601）；子任务 spawn 前检查，未走完的子任务被打断
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS subtasks (
-            id              TEXT PRIMARY KEY,
-            task_id         TEXT NOT NULL REFERENCES tasks(id),
-            idx             INTEGER NOT NULL,
-            desc            TEXT NOT NULL,
-            worker_type     TEXT NOT NULL,
-            model           TEXT,
-            stage           INTEGER,
-            status          TEXT NOT NULL DEFAULT 'pending',
-            output          TEXT,
-            error           TEXT,
-            result_path     TEXT,
-            source_segments TEXT,
-            created_at      TEXT NOT NULL,
-            updated_at      TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS task_events (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id    TEXT NOT NULL,
-            subtask_id TEXT,
-            ts         TEXT NOT NULL,
-            event      TEXT NOT NULL,
-            data       TEXT
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS chat_messages (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            role       TEXT NOT NULL,
-            content    TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS approvals (
-            id         TEXT PRIMARY KEY,
-            task_id    TEXT NOT NULL,
-            subtask_id TEXT,
-            cmd        TEXT NOT NULL,
-            status     TEXT NOT NULL DEFAULT 'pending',
-            created_at TEXT NOT NULL,
-            decided_at TEXT
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS user_profile (
-            key        TEXT PRIMARY KEY,
-            value      TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS conversations (
-            id         TEXT PRIMARY KEY,
-            title      TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    # 存量库（如已运行的 maestro.db）可能没有 data 列，幂等补列
-    _ensure_event_data_column(conn)
-    _ensure_task_columns(conn)
-    _ensure_conv_column(conn)
-    _ensure_conv_kind_column(conn)
-    _ensure_subtask_model_column(conn)
-    _ensure_subtask_stage_column(conn)
-    _ensure_default_conversation(conn)
-    # 索引（高频查询加速）。CREATE INDEX IF NOT EXISTS 已是幂等。
-    # subtasks.task_id：每次执行任务都按 task_id 查子任务列表
-    # task_events.task_id：每个任务详情页都按 task_id 查事件
-    _ensure_index(conn, "subtasks", "subtasks_task_id_idx", "(task_id)")
-    _ensure_index(conn, "task_events", "task_events_task_id_idx", "(task_id)")
-    _ensure_index(conn, "task_events", "task_events_subtask_id_idx", "(subtask_id)")
-    _ensure_index(conn, "approvals", "approvals_task_id_idx", "(task_id)")
-    _ensure_index(conn, "chat_messages", "chat_messages_conv_id_idx", "(conv_id)")
-    conn.commit()
-    with _migrated_lock:
-        _migrated.add(key)
+            _migrated.add(key)
     if use_cache:
         _pool.conns[key] = conn
         _pool_stats["open"] += 1

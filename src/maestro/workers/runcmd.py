@@ -240,12 +240,8 @@ def _ensure_cwd(workdir: str) -> str:
     return wd
 
 
-def run(cmd: str, workdir: str, task_id: str | None = None, subtask_id: str | None = None) -> str:
-    """执行命令（三档分级），返回输出。违规/拒绝/超时/异常返回带标记文本（不抛异常）。
-
-    task_id 由编排器传入（embedded worker 的 tool_executor 上下文）；
-    审批命令缺少任务上下文时直接拒绝（安全默认）。
-    """
+def _gate(cmd: str, task_id: str | None, subtask_id: str | None) -> str | None:
+    """防线 1+2：三档分级校验 + 审批流。返回拒绝文案；放行返回 None。"""
     level, reason = validate(cmd)
     if level == sandbox.BLOCKED:
         return f"[run_command 拒绝] {reason}"
@@ -258,29 +254,32 @@ def run(cmd: str, workdir: str, task_id: str | None = None, subtask_id: str | No
         if decision == "timedout":
             return f"[run_command 审批超时] 命令未获批准，已放弃执行：{cmd}"
         # approved：放行继续执行
+    return None
 
-    # 安全加固：列表化 argv + shell=False，避免 shell 注入（&calc / | / ^ / % 等）。
+
+def _build_argv(cmd: str) -> list[str] | None:
+    """argv 安全构建：列表化 + shell=False，避免 shell 注入（&calc / | / ^ / % 等）。
+
+    Windows 内建命令（dir/type/echo/...）在 PATH 下没有同名 exe，
+    必须经 cmd.exe /c 间接调用——subprocess 直接传给 CreateProcessW 的 argv，
+    shell 解析完全跳过，安全等同。仅检查一次（避免重复 dispatch）。
+    """
     argv = _split_cmd(cmd)
     if not argv:
-        return "[run_command 失败] 无法解析命令参数。"
-
-    # Windows 内建命令（dir/type/echo/...）在 PATH 下没有同名 exe，
-    # 必须经 cmd.exe /c 间接调用——subprocess 直接传给 CreateProcessW 的 argv，
-    # shell 解析完全跳过，安全等同。仅检查一次（避免重复 dispatch）。
+        return None
     name = _command_name(cmd)
     if (sys.platform == "win32" and name in _CMD_BUILTINS
             and argv[0].lower() not in ("cmd", "cmd.exe")):
         argv = ["cmd.exe", "/c", *argv]
+    return argv
 
-    # Windows：补全 .exe 后缀便于 PATH 查找（系统 PATH 下 dir.exe / git.exe / etc.）。
-    # shlex 已经按原样保留 .exe 不变，未带的后缀靠 PATH 解析，subprocess.run 不依赖后缀。
-    # CREATE_NO_WINDOW：避免在用户桌面弹黑色 cmd 窗口（仅 Windows 生效）。
+
+def _execute(argv: list[str], cwd: str) -> str:
+    """跑子进程并聚合 stdout/stderr（截断到 MAX_OUTPUT_CHARS，不抛异常）。"""
+    # Windows：CREATE_NO_WINDOW 避免在用户桌面弹黑色 cmd 窗口（仅 Windows 生效）。
     creationflags = (
         subprocess.CREATE_NO_WINDOW if sys.platform == "win32" and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
     )
-
-    cwd = _ensure_cwd(workdir)
-
     try:
         proc = subprocess.run(
             argv,  # 列表形式 → 绝不经过 shell 解析
@@ -305,3 +304,20 @@ def run(cmd: str, workdir: str, task_id: str | None = None, subtask_id: str | No
     if len(text) > MAX_OUTPUT_CHARS:
         text = text[:MAX_OUTPUT_CHARS] + "\n…[已截断，输出过长]"
     return text
+
+
+def run(cmd: str, workdir: str, task_id: str | None = None, subtask_id: str | None = None) -> str:
+    """执行命令（三档分级），返回输出。违规/拒绝/超时/异常返回带标记文本（不抛异常）。
+
+    task_id 由编排器传入（embedded worker 的 tool_executor 上下文）；
+    审批命令缺少任务上下文时直接拒绝（安全默认）。
+    """
+    denial = _gate(cmd, task_id, subtask_id)
+    if denial:
+        return denial
+
+    argv = _build_argv(cmd)
+    if not argv:
+        return "[run_command 失败] 无法解析命令参数。"
+
+    return _execute(argv, _ensure_cwd(workdir))

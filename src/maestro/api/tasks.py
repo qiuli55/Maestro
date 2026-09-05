@@ -1,6 +1,7 @@
 """任务 REST API：创建/列表/编辑/执行/取消/恢复/重试/审批。"""
 from __future__ import annotations
 
+import logging
 import os
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -10,6 +11,8 @@ from .deps import _executor_fast, _executor_slow, _snapshot
 from .. import orchestrator, sandbox, split
 import maestro.workers as _wmod
 from ..workers import base as wbase
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -97,8 +100,9 @@ def _retry_job(subtask_id: str, timeout: int = 600):
         try:
             db.set_subtask_output(conn, subtask_id, db.FAILED,
                                   error=f"[重派失败] {type(e).__name__}: {str(e)[:200]}")
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as db_e:  # noqa: BLE001 — 错误落库再失败，只留日志
+            logger.error("重派失败且错误落库也失败 subtask=%s: 重派错=%s 落库错=%s",
+                         subtask_id, e, db_e)
     finally:
         conn.close()
 
@@ -382,19 +386,15 @@ def list_tasks(status: str | None = None, limit: int = 200, offset: int = 0):
 
 # Agent/Worker 列表（前端多选 agent 面板用）
 
-@router.post("/api/tasks")
-async def create_task(payload: dict):
-    try:
-        payload = apply_workflow_defaults(payload)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    wf_id = payload.get("workflow")
-    prompt = (payload.get("prompt") or "").strip()
-    # 工作流编排：客户端直接提交启用卡片作为子任务（跳过 LLM 拆分）
-    custom_subtasks = payload.get("subtasks")
-    if custom_subtasks is not None and not isinstance(custom_subtasks, list):
+def _resolve_custom_subtasks(payload: dict, wf_id) -> list | None:
+    """工作流编排：解析自定义子任务卡片，客户端直提优先（跳过 LLM 拆分）。
+
+    payload.subtasks 优先；否则按 workflow id 展开用户自建工作流的启用卡片。
+    """
+    custom = payload.get("subtasks")
+    if custom is not None and not isinstance(custom, list):
         raise HTTPException(400, "subtasks 必须是数组")
-    if custom_subtasks is None and wf_id:
+    if custom is None and wf_id:
         # 用户自建工作流：按 id 展开启用卡片
         conn = db.init_db()
         try:
@@ -402,70 +402,87 @@ async def create_task(payload: dict):
         finally:
             conn.close()
         if uw is not None:
-            custom_subtasks = _workflow_to_subtasks(uw["definition"])
-            if not custom_subtasks:
+            custom = _workflow_to_subtasks(uw["definition"])
+            if not custom:
                 raise HTTPException(400, "该工作流没有启用的卡片")
-    scenario = payload.get("scenario", "a")
-    worker_type = payload.get("worker_type", "embedded")
-    parallel = bool(payload.get("parallel", scenario != "a"))
-    no_merge = bool(payload.get("no_merge", False))
-    model = payload.get("model") or None
-    # key 不在这里注入 env：llm.get_client 每次按 provider 从 providers.json
-    # 的 api_key_env 现查，并发任务互不影响（进程级 env 会让不同模型任务互相覆盖 key）。
-    # confirm=False 时跳过人工闸门，拆分后立即执行（等价旧行为）
-    confirm = bool(payload.get("confirm", True))
-    # 任务关联会话：完成后结果写入该会话（对话隔离/任务对话可见结果）
-    conv_id = payload.get("conv_id") or None
-    # 多 agent 选择（支持同时派给多个 agent）
-    selected_workers: list[str] = payload.get("selected_workers") or []
-    # 至少选一个；不合法/不可用的 agent 过滤掉
-    valid_workers = _wmod.available_workers()
-    selected_workers = [w for w in selected_workers if w in valid_workers]
-    # 如果没传或全不合法，退回 embedded
-    if not selected_workers:
-        selected_workers = ["embedded"]
+    return custom
 
+
+def _normalize_task_args(payload: dict, custom_subtasks, valid_workers: list[str]) -> dict:
+    """校验并归一任务参数（scenario/worker/parallel 等），返回整理后的字典。"""
+    prompt = (payload.get("prompt") or "").strip()
     if not prompt:
         raise HTTPException(400, "prompt 不能为空")
-    if custom_subtasks is not None:
-        scenario = "custom"  # 自定义卡片链路：不做场景校验与 auto 识别
-    elif scenario not in ("a", "b", "c", "auto"):
+    raw_scenario = payload.get("scenario", "a")
+    scenario = "custom" if custom_subtasks is not None else raw_scenario
+    if custom_subtasks is None and scenario not in ("a", "b", "c", "auto"):
         raise HTTPException(400, "scenario 必须是 a / b / c / auto")
-    # 用第一个 agent 拆分任务，后续 round-robin 分配
+    # 多 agent 选择（支持同时派给多个 agent）：至少选一个；不合法/不可用的过滤掉
+    selected = [w for w in (payload.get("selected_workers") or []) if w in valid_workers]
+    if not selected:  # 没传或全不合法，退回 embedded
+        selected = ["embedded"]
+    worker_type = payload.get("worker_type", "embedded")
     if worker_type not in valid_workers:
-        worker_type = selected_workers[0]
+        worker_type = selected[0]  # 用第一个 agent 拆分任务，后续 round-robin 分配
+    return {
+        "prompt": prompt,
+        "scenario": scenario,
+        "worker_type": worker_type,
+        # parallel 默认按用户传入的原始 scenario 判断（custom 覆盖不影响默认值）
+        "parallel": bool(payload.get("parallel", raw_scenario != "a")),
+        "no_merge": bool(payload.get("no_merge", False)),
+        "model": payload.get("model") or None,
+        "confirm": bool(payload.get("confirm", True)),
+        "conv_id": payload.get("conv_id") or None,
+        "selected_workers": selected,
+    }
+
+
+@router.post("/api/tasks")
+async def create_task(payload: dict):
+    """创建任务：预生成 task_id 立即返回，拆分/执行交后台线程（人工闸门可选）。"""
+    try:
+        payload = apply_workflow_defaults(payload)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    wf_id = payload.get("workflow")
+    custom_subtasks = _resolve_custom_subtasks(payload, wf_id)
+    # key 不在这里注入 env：llm.get_client 每次按 provider 从 providers.json
+    # 的 api_key_env 现查，并发任务互不影响（进程级 env 会让不同模型任务互相覆盖 key）。
+    valid_workers = _wmod.available_workers()
+    args = _normalize_task_args(payload, custom_subtasks, valid_workers)
 
     detect_reason = None
-    if scenario == "auto" and custom_subtasks is None:
+    if args["scenario"] == "auto":
         # 决策：LLM 识别输入类型 → 路由到 a/b/c
         try:
-            scenario, detect_reason = split.detect_scenario(prompt, model=model)
+            args["scenario"], detect_reason = split.detect_scenario(args["prompt"], model=args["model"])
         except Exception as e:  # noqa: BLE001 — 识别失败退回场景 A，不让任务失败
-            scenario, detect_reason = "a", f"auto 识别失败回退 a: {type(e).__name__}"
+            args["scenario"], detect_reason = "a", f"auto 识别失败回退 a: {type(e).__name__}"
 
     # 预先生成 task_id 立即返回；拆分交给后台线程
     task_id = f"task_{os.urandom(4).hex()}"
     _executor_fast.submit(
         _prepare_job,
         task_id,
-        prompt,
-        scenario,
-        worker_type,
-        parallel,
-        model,
-        no_merge,
-        confirm,
-        conv_id,
-        selected_workers,
+        args["prompt"],
+        args["scenario"],
+        args["worker_type"],
+        args["parallel"],
+        args["model"],
+        args["no_merge"],
+        args["confirm"],
+        args["conv_id"],
+        args["selected_workers"],
         custom_subtasks,
     )
     return {
         "task_id": task_id,
-        "confirm": confirm,
-        "scenario": scenario,
+        "confirm": args["confirm"],
+        "scenario": args["scenario"],
         "detect_reason": detect_reason,
-        "selected_workers": selected_workers,
-        "model": model,
+        "selected_workers": args["selected_workers"],
+        "model": args["model"],
         "workflow": wf_id,
     }
 

@@ -16,6 +16,7 @@ SQLite 只做持久化展示（快照/API 可见），内存 Event 做跨线程�
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import uuid
@@ -23,6 +24,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from . import db
+
+logger = logging.getLogger(__name__)
 
 # 审批默认超时（秒）。环境变量可调，测试用短超时。
 DEFAULT_APPROVAL_TIMEOUT = int(os.environ.get("MAESTRO_APPROVAL_TIMEOUT", "120"))
@@ -77,8 +80,8 @@ def _get_conn():
         if old is not None:
             try:
                 old.close()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001 — 清理失败只记录，不影响重建
+                logger.debug("关闭沙箱旧连接失败: %s", e)
         _TLS.conn = None
         _TLS.db_path = cur_path
     conn = getattr(_TLS, "conn", None)
@@ -113,13 +116,14 @@ def _persist(req: ApprovalRequest, status: str) -> None:
             ),
         )
         conn.commit()
-    except Exception:  # noqa: BLE001 — 持久化失败可降级为纯内存审批
+    except Exception as e:  # noqa: BLE001 — 持久化失败可降级为纯内存审批
+        logger.warning("审批 %s 持久化失败（降级为内存审批）: %s", req.id, e)
         # 连接异常时丢弃，下次 _get_conn 重建
         try:
             if getattr(_TLS, "conn", None) is not None:
                 _TLS.conn.close()
-        except Exception:
-            pass
+        except Exception as close_e:
+            logger.debug("关闭异常沙箱连接失败: %s", close_e)
         _TLS.conn = None
 
 
@@ -132,8 +136,8 @@ def _notify(req: ApprovalRequest) -> None:
     for hook in list(_notify_hooks):
         try:
             hook(req)
-        except Exception:  # noqa: BLE001 — 钩子异常不影响审批主流程
-            pass
+        except Exception as e:  # noqa: BLE001 — 钩子异常不影响审批主流程
+            logger.warning("审批通知钩子异常 req=%s: %s", req.id, e)
 
 
 def list_pending(task_id: str | None = None) -> list[dict]:

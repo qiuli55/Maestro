@@ -13,8 +13,11 @@ LL 钩子超时会被 Windows 静默摘除，务必快进快出。
 from __future__ import annotations
 
 import ctypes
+import logging
 import threading
 from ctypes import wintypes
+
+logger = logging.getLogger(__name__)
 
 user32 = ctypes.WinDLL("user32")
 kernel32 = ctypes.WinDLL("kernel32")
@@ -82,13 +85,14 @@ def _run(on_move, on_interact) -> None:
             if wparam == WM_MOUSEMOVE:
                 try:
                     on_move(x, y)
-                except Exception:  # noqa: BLE001 回调异常绝不影响鼠标
-                    pass
+                except Exception as e:  # noqa: BLE001 回调异常绝不影响鼠标
+                    logger.warning("on_move 回调异常 (%s,%s): %s", x, y, e)
             elif wparam in BUTTON_EVENTS:
                 try:
                     swallow = bool(on_interact(
                         BUTTON_EVENTS[wparam], x, y, _wheel_delta(int(info.mouseData))))
-                except Exception:  # noqa: BLE001 决策异常按放行处理（宁可不吞）
+                except Exception as e:  # noqa: BLE001 决策异常按放行处理（宁可不吞）
+                    logger.warning("on_interact 决策异常按放行 (%s,%s): %s", x, y, e)
                     swallow = False
                 if swallow:
                     return 1  # 吞掉：事件不再传给系统，由调用方转发壁纸层

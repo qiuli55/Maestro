@@ -11,11 +11,14 @@
 不带前缀走默认 DeepSeek。provider 定义见 configs/providers.json。
 """
 import json
+import logging
 import os
 
 from openai import OpenAI
 
 from . import config, resilience
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_PROVIDER = "deepseek"
 
@@ -39,8 +42,8 @@ def reset_client_cache() -> None:
     for c in _client_cache.values():
         try:
             c.close()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001 — 清理失败只记录，不影响清空
+            logger.debug("关闭 OpenAI client 失败: %s", e)
     _client_cache.clear()
 
 
@@ -141,6 +144,40 @@ def complete_json(system: str, user: str, model: str | None = None) -> dict | li
     return _extract_json(raw)
 
 
+def _make_chat_fn(client, model_name, msgs: list, tools: list[dict], max_retries: int):
+    """构造带弹性（重试/熔断/限流）的单轮 chat 调用闭包。
+
+    msgs 传引用：工具往返往里追加，闭包每轮读到的是最新消息列表。
+    """
+    @resilience.with_resilience(
+        retry=resilience.RetryPolicy(max_retries=max_retries),
+        breaker=resilience.shared_breaker(),
+        limiter=resilience.shared_limiter(),
+    )
+    def _chat():
+        return _raw_chat(client, model_name, msgs, temperature=0.2, tools=tools)
+
+    return _chat
+
+
+def _run_tool_round(msg, msgs: list, tool_executor) -> None:
+    """执行一轮 tool_calls，把结果作为 tool 消息追加进 msgs。"""
+    msgs.append(msg)  # 模型带 tool_calls 的 assistant 消息
+    for tc in msg.tool_calls:
+        try:
+            args = json.loads(tc.function.arguments or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        result = tool_executor(tc.function.name, args)
+        msgs.append(
+            {
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result,
+            }
+        )
+
+
 def complete_with_tools(
     system: str,
     user: str,
@@ -165,14 +202,7 @@ def complete_with_tools(
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-
-    @resilience.with_resilience(
-        retry=resilience.RetryPolicy(max_retries=max_retries),
-        breaker=resilience.shared_breaker(),
-        limiter=resilience.shared_limiter(),
-    )
-    def _chat():
-        return _raw_chat(client, model_name, msgs, temperature=0.2, tools=tools)
+    _chat = _make_chat_fn(client, model_name, msgs, tools, max_retries)
 
     for _ in range(max_rounds):
         # 熔断打开直接抛（与 complete 一致），由上层落 FAILED；embedded worker
@@ -181,21 +211,7 @@ def complete_with_tools(
         msg = resp.choices[0].message
         if not getattr(msg, "tool_calls", None):
             return msg.content or ""
-
-        msgs.append(msg)  # 模型带 tool_calls 的 assistant 消息
-        for tc in msg.tool_calls:
-            try:
-                args = json.loads(tc.function.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            result = tool_executor(tc.function.name, args)
-            msgs.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result,
-                }
-            )
+        _run_tool_round(msg, msgs, tool_executor)
 
     # 达到轮数上限仍未给出最终文本：日志警告 + 返回空串。
     import warnings
