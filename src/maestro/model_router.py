@@ -3,7 +3,7 @@
 设计要点：
 - 零额外依赖（不用 LLM 来选 LLM 避免鸡生蛋；用关键词 + 长度启发）
 - 配置项优先（环境变量 > 默认值），用户可关掉
-- 单函数 `route(prompt, explicit=None)` 返回模型 id（deepseek:deepseek-chat 等），
+- 单函数 `route(prompt, explicit=None)` 返回模型 id（deepseek:deepseek-v4-flash 等），
   明确 None 表示"用全局默认"（向后兼容）
 
 分类规则（保守：只把高置信度的明确信号分到专用模型）：
@@ -19,9 +19,9 @@ import re
 
 # 默认值可被 MAESTRO_MODEL_CHAT / MAESTRO_MODEL_CODE / MAESTRO_MODEL_REASON 覆盖
 _DEFAULTS = {
-    "chat": "deepseek:deepseek-chat",
-    "code": "deepseek:deepseek-coder",
-    "reason": "deepseek:deepseek-reasoner",
+    "chat": "deepseek:deepseek-v4-flash",
+    "code": "deepseek:deepseek-v4-flash",
+    "reason": "deepseek:deepseek-v4-flash",
 }
 
 _CODE_HINTS = re.compile(

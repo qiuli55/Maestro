@@ -3,7 +3,7 @@
     "deepseek": {
       "base_url": "https://api.deepseek.com",
       "api_key_env": "DEEPSEEK_API_KEY",
-      "model": "deepseek-chat"
+      "model": "deepseek-v4-flash"
     },
     "kimi": {
       "base_url": "https://api.moonshot.cn/v1",

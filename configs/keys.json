@@ -8,9 +8,21 @@
       "env_var": "DEEPSEEK_API_KEY",
       "provider": "deepseek",
       "models": [
-        {"id": "deepseek:deepseek-chat",     "label": "DeepSeek Chat (v3)",    "desc": "日常对话 / 轻量任务"},
-        {"id": "deepseek:deepseek-coder",    "label": "DeepSeek Coder",        "desc": "代码生成 / 重构"},
-        {"id": "deepseek:deepseek-reasoner", "label": "DeepSeek Reasoner",     "desc": "深度推理 / 复杂分析"}
+        {
+          "id": "deepseek:deepseek-v4-flash",
+          "label": "DeepSeek V4 Flash",
+          "desc": "日常对话 / 轻量任务"
+        },
+        {
+          "id": "deepseek:deepseek-v4-flash",
+          "label": "DeepSeek V4 Flash",
+          "desc": "代码生成 / 重构"
+        },
+        {
+          "id": "deepseek:deepseek-v4-flash",
+          "label": "DeepSeek V4 Flash",
+          "desc": "深度推理 / 复杂分析"
+        }
       ]
     },
     {
@@ -19,7 +31,11 @@
       "env_var": "KIMI_API_KEY",
       "provider": "kimi",
       "models": [
-        {"id": "kimi:kimi-k2.6", "label": "Kimi K2.6", "desc": "长文本理解 / 国产模型"}
+        {
+          "id": "kimi:kimi-k2.6",
+          "label": "Kimi K2.6",
+          "desc": "长文本理解 / 国产模型"
+        }
       ]
     },
     {
@@ -28,7 +44,11 @@
       "env_var": "MINIMAX_API_KEY",
       "provider": "minimax",
       "models": [
-        {"id": "image-01", "label": "Image Gen (abab6.5)", "desc": "图片生成"}
+        {
+          "id": "image-01",
+          "label": "Image Gen (abab6.5)",
+          "desc": "图片生成"
+        }
       ]
     }
   ]

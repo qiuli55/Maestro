@@ -62,9 +62,9 @@ def test_apply_workflow_defaults_explicit_wins():
 
 
 def test_apply_workflow_defaults_model_injected():
-    """deep-review 预设带 reasoner 模型；payload 未指定模型时注入。"""
+    """deep-review 预设带推理模型；payload 未指定模型时注入（对齐 configs/workflows.json 现值）。"""
     out = apply_workflow_defaults({"workflow": "deep-review"})
-    assert out["model"] == "deepseek:deepseek-reasoner"
+    assert out["model"] == "deepseek:deepseek-v4-flash"
 
 
 def test_apply_workflow_defaults_unknown_raises():

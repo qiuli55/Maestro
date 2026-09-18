@@ -277,7 +277,7 @@ def test_task_card_rendered_via_winAppendTaskCard(browser_page):
     page, errs = browser_page
     page.evaluate("""() => {
       window.__e2e__.winCreate('t1', '任务卡', 'chat');
-      window.__e2e__.winAppendTaskCard('t1', 'task_demo_1', ['embedded'], 'deepseek:deepseek-chat', 'p');
+      window.__e2e__.winAppendTaskCard('t1', 'task_demo_1', ['embedded'], 'deepseek:deepseek-v4-flash', 'p');
     }""")
     page.wait_for_timeout(300)
     card = page.locator('.task-card[data-task="task_demo_1"]')
@@ -285,7 +285,7 @@ def test_task_card_rendered_via_winAppendTaskCard(browser_page):
     expect(card.locator(".tc-status")).to_have_text("待拆分")
     meta = card.locator(".tc-meta").inner_text()
     assert "embedded" in meta
-    assert "deepseek:deepseek-chat" in meta
+    assert "deepseek:deepseek-v4-flash" in meta
     assert "task_demo_1" in meta
     assert not errs
 

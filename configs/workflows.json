@@ -57,7 +57,7 @@
       "scenario": "b",
       "parallel": false,
       "workers": ["embedded"],
-      "model": "deepseek:deepseek-reasoner",
+      "model": "deepseek:deepseek-v4-flash",
       "confirm": false,
       "no_merge": false
     },

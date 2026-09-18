@@ -13,7 +13,7 @@ from maestro.llm import _resolve, get_client, _DEFAULT_PROVIDER
 
 
 def test_resolve_plain_model_goes_default():
-    assert _resolve("deepseek-chat") == (_DEFAULT_PROVIDER, "deepseek-chat")
+    assert _resolve("deepseek-v4-flash") == (_DEFAULT_PROVIDER, "deepseek-v4-flash")
 
 
 def test_resolve_none_goes_default_empty():
@@ -48,7 +48,7 @@ def test_get_client_default_without_config(monkeypatch):
         load_providers=lambda: {}
     ))
     client, default_model = get_client("deepseek")
-    assert default_model == "deepseek-chat"
+    assert default_model == "deepseek-v4-flash"
 
 
 def test_get_client_missing_key_raises(monkeypatch):

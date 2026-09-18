@@ -51,7 +51,7 @@ def _resolve(model: str | None) -> tuple[str, str]:
     """把 model 解析为 (provider, model_name)。支持 "provider:model"。
 
     - "kimi:kimi-k2.6" -> ("kimi", "kimi-k2.6")
-    - "deepseek-chat" / None -> ("deepseek", "deepseek-chat" 或空由调用方补默认)
+    - "deepseek-v4-flash" / None -> ("deepseek", "deepseek-v4-flash" 或空由调用方补默认)
     """
     if model and ":" in model:
         provider, _, m = model.partition(":")
@@ -72,12 +72,12 @@ def get_client(provider: str = _DEFAULT_PROVIDER) -> tuple[OpenAI, str]:
     if info:
         base_url = info.get("base_url")
         key_env = info.get("api_key_env") or f"{provider.upper()}_API_KEY"
-        default_model = info.get("model") or os.environ.get("MAESTRO_MODEL", "deepseek-chat")
+        default_model = info.get("model") or os.environ.get("MAESTRO_MODEL", "deepseek-v4-flash")
     elif provider == _DEFAULT_PROVIDER:
         # 无配置文件时向后兼容：环境变量优先，其次内置默认
         base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         key_env = "DEEPSEEK_API_KEY"
-        default_model = os.environ.get("MAESTRO_MODEL", "deepseek-chat")
+        default_model = os.environ.get("MAESTRO_MODEL", "deepseek-v4-flash")
     else:
         raise RuntimeError(f"未配置 provider '{provider}'（见 configs/providers.json）")
 
