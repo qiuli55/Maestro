@@ -64,8 +64,8 @@ def test_metrics_whitelisted_with_api_key(tmp_path, monkeypatch):
         # 无 key 头：应 200
         assert c.get("/metrics").status_code == 200
         assert c.get("/api/healthz").status_code == 200  # 同级白名单
-        # 带错误 key：业务端点应 403
-        assert c.get("/api/tasks", headers={"X-API-Key": "wrong"}).status_code == 403
+        # 带错误 key：读取端点放行（[2026-09-08] 防护策略变更：错 key 不再 403）
+        assert c.get("/api/tasks", headers={"X-API-Key": "wrong"}).status_code == 200
 
 
 def test_permissions_policy_on_html(client):

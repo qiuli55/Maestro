@@ -92,3 +92,9 @@ def tmp_db(tmp_path):
 def _isolate_outputs(monkeypatch, tmp_path):
     # 所有测试把产出写到 tmp，避免污染项目 outputs/
     monkeypatch.setattr("maestro.orchestrator.OUTPUTS_ROOT", tmp_path / "outputs")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_trial_state(monkeypatch, tmp_path):
+    """试用计数状态文件指到 tmp：测试互不影响，也不污染真实 data/ 状态。"""
+    monkeypatch.setenv("MAESTRO_TRIAL_STATE", str(tmp_path / "ai_call_state.json"))

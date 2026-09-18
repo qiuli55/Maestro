@@ -1,6 +1,46 @@
 (function(){
 "use strict";
 
+  // ========== API Key 引导 + 免费试用令牌（Web 端防护） ==========
+  // [2026-09-08] 防护策略变更：不再强制 key；?key=<MAESTRO_API_KEY> 仍支持（管理凭证，
+  // 免计数）。AI 消耗端点服务端按 IP 计免费次数，超次返回 401 need_token —— 此处
+  // 统一弹窗输入访问令牌，输对一次后端按 IP 永久解锁，前端记住令牌避免重复弹窗。
+  (function(){
+    try{
+      var k=new URLSearchParams(location.search).get("key");
+      if(k) localStorage.setItem("maestro_key",k);
+    }catch(e){}
+    var KEY="";
+    try{ KEY=localStorage.getItem("maestro_key")||""; }catch(e){}
+    var TOKEN="";
+    try{ TOKEN=localStorage.getItem("maestro_guard_token")||""; }catch(e){}
+    var origFetch=window.fetch;
+    window.fetch=function(input,init){
+      init=init||{};
+      var h=new Headers((init&&init.headers)||{});
+      if(KEY && !h.has("X-API-Key")) h.set("X-API-Key",KEY);
+      if(TOKEN && !h.has("X-Access-Token")) h.set("X-Access-Token",TOKEN);
+      return origFetch(input,{method:(init&&init.method)||"GET",headers:h,
+        body:(init&&init.body),cache:(init&&init.cache),credentials:(init&&init.credentials)}
+      ).then(function(resp){
+        if(resp.status!==401 || TOKEN) return resp;
+        return resp.clone().json().then(function(j){
+          if(!j || !j.need_token) return resp;
+          var t=prompt("免费体验已超过 3 次，请输入访问令牌继续使用：");
+          if(!t) return resp;
+          TOKEN=t;
+          try{ localStorage.setItem("maestro_guard_token",TOKEN); }catch(e){}
+          h.set("X-Access-Token",TOKEN);
+          return origFetch(input,{method:(init&&init.method)||"GET",headers:h,
+            body:(init&&init.body),cache:(init&&init.cache),credentials:(init&&init.credentials)});
+        }).catch(function(){ return resp; });
+      });
+    };
+    window.__maestroKeyQS=function(){
+      return "?key="+encodeURIComponent(KEY);
+    };
+  })();
+
   // ========== 壁纸层模式（?wallpaper=1）==========
   // 注意：页面 CSP 是 script-src 'self'，禁止内联脚本——检测必须放在这个外部文件里
   if(location.search.indexOf("wallpaper=1")>-1){
@@ -799,7 +839,7 @@
   //   本地流式失败时的兜底（dataset.text 比对在 winAppendMsg 内完成）
   var evtWs=null,evtWsTimer=null;
   function connectEvtWs(){
-    try{ evtWs=new WebSocket(MAESTRO.replace("http","ws")+"/ws"); }catch(e){ scheduleEvtWsReconnect(); return; }
+    try{ evtWs=new WebSocket(MAESTRO.replace("http","ws")+"/ws"+(window.__maestroKeyQS?window.__maestroKeyQS():"")); }catch(e){ scheduleEvtWsReconnect(); return; }
     evtWs.onopen=function(){ /* 已连接：静默 */ };
     evtWs.onmessage=function(ev){
       var msg; try{ msg=JSON.parse(ev.data); }catch(e){ return; }
@@ -2357,7 +2397,7 @@
   (function(){
     var ws=null;
     var reconnectTimer=null;
-    var WS_URL=MAESTRO.replace("http","ws")+"/ws";
+    var WS_URL=MAESTRO.replace("http","ws")+"/ws"+(window.__maestroKeyQS?window.__maestroKeyQS():"");
 
     function connectWS(){
       try{
