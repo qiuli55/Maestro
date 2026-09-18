@@ -23,7 +23,7 @@ class OpenCodeWorker(SubprocessWorker):
     bin = os.environ.get("OPENCODE_BIN", r"E:\tools\opencode\node_modules\opencode-ai\bin\opencode.exe")
 
     def build_command(self, prompt: str, workdir: str) -> list[str]:
-        model = os.environ.get("MAESTRO_MODEL", "deepseek-chat")
+        model = os.environ.get("MAESTRO_MODEL", "deepseek-v4-flash")
         return [
             self.bin,
             "run",

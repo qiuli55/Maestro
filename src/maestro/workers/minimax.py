@@ -6,6 +6,7 @@
 import os
 import subprocess
 
+from .. import jail
 from ..workers.base import WorkerResult, register
 
 # MiniMax CLI 路径（可移植：env 优先 → PATH 探测 → 默认兜底）
@@ -49,6 +50,7 @@ def _run_mmx(args: list) -> tuple[str, str, int]:
     # 兜底：如果未来 mmx 改了协议 / 没持久化，再传 MMX_API_KEY。
     if MMX_API_KEY:
         cmd = cmd + ["--api-key", MMX_API_KEY]
+    cmd = jail.wrap(cmd)  # 依赖 jail：mmx 子进程同样关进沙箱（无 workdir → 沙箱根目录）
     try:
         result = subprocess.run(
             cmd,

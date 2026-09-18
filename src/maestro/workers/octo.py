@@ -11,7 +11,7 @@ class OctoWorker(SubprocessWorker):
     bin = os.environ.get("OCTO_BIN", r"E:\tools\octo\octo.exe")
 
     def build_command(self, prompt: str, workdir: str) -> list[str]:
-        model = os.environ.get("MAESTRO_MODEL", "deepseek-chat")
+        model = os.environ.get("MAESTRO_MODEL", "deepseek-v4-flash")
         # --no-tools 纯文本产出（内嵌式执行，不做文件改动）
         # --no-save 不残留 session；--quiet 少状态噪音
         return [

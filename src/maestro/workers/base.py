@@ -10,6 +10,8 @@ import os
 import subprocess
 from dataclasses import dataclass
 
+from .. import jail
+
 
 @dataclass
 class WorkerResult:
@@ -109,7 +111,7 @@ class SubprocessWorker:
     def spawn(self, prompt: str, workdir: str, timeout: int,
               task_id: str | None = None, subtask_id: str | None = None) -> WorkerResult:
         """启动子进程。task_id/subtask_id 供需要审批的 worker（embedded）归属审批请求。"""
-        cmd = self.build_command(prompt, workdir)
+        cmd = jail.wrap(self.build_command(prompt, workdir), workdir)  # 依赖 jail：外部 CLI 子进程同样关进沙箱
         env = {**os.environ, **self.extra_env()}
         try:
             proc = subprocess.run(

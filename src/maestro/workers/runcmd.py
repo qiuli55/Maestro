@@ -15,7 +15,7 @@ import re
 import subprocess
 import sys
 
-from .. import sandbox
+from .. import jail, sandbox
 
 # 允许的命令（只读/查看类）。不含任何会修改状态、删除、下载执行的命令。
 _ALLOWED_COMMANDS = {
@@ -280,6 +280,7 @@ def _execute(argv: list[str], cwd: str) -> str:
     creationflags = (
         subprocess.CREATE_NO_WINDOW if sys.platform == "win32" and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
     )
+    argv = jail.wrap(argv, cwd)  # 依赖 jail 模块：所有 agent 命令关进专属文件夹沙箱（未启用时原样返回）
     try:
         proc = subprocess.run(
             argv,  # 列表形式 → 绝不经过 shell 解析
