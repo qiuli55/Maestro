@@ -7,7 +7,6 @@
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -78,52 +77,20 @@ app.add_middleware(
 )
 
 # ====== API 防护中间件 ======
-# [2026-09-08] 需求变更：面试演示场景不再强制 X-API-Key（原策略：设 key 后 /api/*
-# 全部要鉴权）。改为「AI 消耗端点每 IP 3 次免费试用 + 访问令牌解锁」，令牌与 NOVA
-# 的防线一致（317132ll）；解锁状态持久化，输对一次该 IP 永久放行。
-# MAESTRO_API_KEY 降级为管理凭证：带正确 key（头或 ?key=）的调用直接放行且不消耗
-# 免费次数，脚本/巡检/旧演示链接全部兼容。CSRF 的 Content-Type 检查保留。
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# 免费试用配置：dispatch 内每次从 env 读，monkeypatch 即时生效（测试隔离）
-_FREE_TRIAL_LIMIT_DEFAULT = 3
-_UNLOCK_TOKEN_DEFAULT = "317132ll"
-_TRIAL_STATE_FILE_DEFAULT = str(ROOT / "data" / "ai_call_state.json")
-
-
-def _trial_cfg() -> tuple[int, str, str]:
-    """返回 (免费次数上限, 访问令牌, 状态文件路径)，均允许环境变量覆盖。"""
-    return (
-        int(os.environ.get("MAESTRO_FREE_TRIAL_LIMIT", _FREE_TRIAL_LIMIT_DEFAULT)),
-        os.environ.get("MAESTRO_GUARD_TOKEN", _UNLOCK_TOKEN_DEFAULT),
-        os.environ.get("MAESTRO_TRIAL_STATE", _TRIAL_STATE_FILE_DEFAULT),
-    )
-
-# AI 消耗型端点：会触发 LLM/worker 调用的 POST（读取类端点不计数，页面打开即用）
-_AI_COST_EXACT = frozenset({"/api/chat", "/api/chat/stream", "/api/tasks"})
-_AI_COST_SUFFIX = ("/execute", "/retry")
-
-
-def _load_trial_state() -> dict:
-    """读取免费试用/解锁状态；文件缺失或损坏时返回空结构。"""
-    _, _, state_file = _trial_cfg()
-    try:
-        with open(state_file) as f:
-            return json.load(f)
-    except Exception:
-        return {"ips": {}, "unlocked": []}
-
-
-def _save_trial_state(st: dict) -> None:
-    """持久化试用状态（解锁名单 + 各 IP 已用次数）。"""
-    _, _, state_file = _trial_cfg()
-    Path(state_file).parent.mkdir(parents=True, exist_ok=True)
-    with open(state_file, "w") as f:
-        json.dump(st, f)
-
-
 class _APIKeyAuthMiddleware(BaseHTTPMiddleware):
-    """API 防护：AI 消耗端点按 IP 免费试用，超次需访问令牌；key 为管理凭证。"""
+    """API 防护：保留 X-API-Key 管理凭证与 CSRF (Content-Type) 防线。
+
+    [2026-09-20] IP 维度"3 次免费试用 + 访问令牌"闸门已移出产品代码：
+    该机制属于部署层运维措施，不属于产品逻辑本身。GitHub 公开仓库
+    不再携带任何 token 字面值；B 机 nginx 反代层（或独立 guard 服务）
+    继续承担 IP 维度防滥用职能。
+
+    保留两条防线：
+    1) X-API-Key（管理凭证）—— 头或 ?key= 查询参数，兼容巡检/旧演示/服务间调用；
+    2) CSRF (Content-Type) —— 跨源写请求必须 application/json。
+    """
 
     _WHITELIST_PATHS = frozenset({
         "/api/healthz",         # liveness（K8s/容器探针）
@@ -154,7 +121,7 @@ class _APIKeyAuthMiddleware(BaseHTTPMiddleware):
         ):
             return await call_next(request)
 
-        # 管理凭证：正确 X-API-Key（头或 ?key= 查询参数）放行且不消耗免费次数
+        # 管理凭证：正确 X-API-Key（头或 ?key= 查询参数）放行
         # —— 兼容巡检脚本、旧演示链接与服务间调用
         provided = (
             request.headers.get("x-api-key") or request.query_params.get("key") or ""
@@ -178,51 +145,7 @@ class _APIKeyAuthMiddleware(BaseHTTPMiddleware):
                     status_code=415,
                 )
 
-        # AI 消耗端点：每 IP 前 N 次免费，超过需访问令牌（输对一次永久解锁）
-        if self._is_ai_cost(request.method, path):
-            limit, unlock_token, _ = _trial_cfg()
-            st = _load_trial_state()
-            ip = (
-                request.headers.get("x-real-ip")
-                or (request.client.host if request.client else "unknown")
-            )
-            if ip not in st.get("unlocked", []):
-                token = (
-                    request.headers.get("x-access-token")
-                    or request.query_params.get("token")
-                    or ""
-                ).strip()
-                if token and _compare_keys(token, unlock_token):
-                    st.setdefault("unlocked", []).append(ip)
-                    _save_trial_state(st)
-                else:
-                    used = st.get("ips", {}).get(ip, 0)
-                    if used >= limit:
-                        return JSONResponse(
-                            {
-                                "error": "免费体验已超过 "
-                                + str(limit)
-                                + " 次，请输入访问令牌继续使用",
-                                "need_token": True,
-                            },
-                            status_code=401,
-                        )
-                    st.setdefault("ips", {})[ip] = used + 1
-                    _save_trial_state(st)
-
         return await call_next(request)
-
-    @staticmethod
-    def _is_ai_cost(method: str, path: str) -> bool:
-        """判断是否为受管端点（触发 LLM/worker 调用或审批决策的 POST；读取类不计数）。"""
-        if method != "POST" or not path.startswith("/api/"):
-            return False
-        # [2026-09-16] 审批端点纳入计数：原实现只数 chat/execute/retry，访客可
-        # 无鉴权反复审批自己触发的命令（自批漏洞）。计入后超免费次数的 IP
-        # 必须持访问令牌才能审批，与"3 次机会"策略对齐。
-        if "/approvals/" in path:
-            return True
-        return path in _AI_COST_EXACT or path.endswith(_AI_COST_SUFFIX)
 
 
 app.add_middleware(_APIKeyAuthMiddleware)
